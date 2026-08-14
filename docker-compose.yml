@@ -88,6 +88,23 @@ services:
     volumes:
       - grafana-data:/var/lib/grafana
 
+  auth:
+    image: ates-auth:latest
+    container_name: ates-auth
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    ports:
+      - "10001:10001"
+    environment:
+      ATES_SERVER_PORT: 10001
+      ATES_DB_URL: jdbc:postgresql://postgres:5432/ates_auth
+      ATES_DB_USER: ates
+      ATES_DB_PASSWORD: ates
+      ATES_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
 volumes:
   postgres-data:
   grafana-data:
