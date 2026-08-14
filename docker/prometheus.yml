@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:10002"]
+
+  - job_name: auth
+    static_configs:
+      - targets: ["auth:10003"]
+
+  - job_name: task-service
+    static_configs:
+      - targets: ["task-service:10004"]
+
+  - job_name: accounting
+    static_configs:
+      - targets: ["accounting:10005"]
+
+  - job_name: analytics
+    static_configs:
+      - targets: ["analytics:10006"]
+
+  - job_name: notification
+    static_configs:
+      - targets: ["notification:10007"]

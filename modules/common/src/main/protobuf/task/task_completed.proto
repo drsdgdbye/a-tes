@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package task;
+
+message TaskCompleted {
+  string event_id              = 1;
+  int64  timestamp             = 2;
+  int32  version               = 3;
+  string task_id               = 4;
+  string task_title            = 5;
+  string assignee_id           = 6;
+  int64  complete_reward_cents = 7;
+}

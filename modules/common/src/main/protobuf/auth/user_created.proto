@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package auth;
+
+message UserCreated {
+  string event_id   = 1;  // UUIDv4
+  int64  timestamp  = 2;  // Unix millis
+  int32  version    = 3;  // старт = 1
+  string user_id    = 4;  // UUID
+  string name       = 5;
+  string email      = 6;
+  string role       = 7;  // popug | manager | accountant | admin
+}

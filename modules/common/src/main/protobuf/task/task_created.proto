@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package task;
+
+message TaskCreated {
+  string event_id              = 1;
+  int64  timestamp             = 2;
+  int32  version               = 3;
+  string task_id               = 4;
+  string title                 = 5;
+  string description           = 6;  // "" если отсутствует
+  string assignee_id           = 7;  // рандомный попуг
+  int64  assign_fee_cents      = 8;  // rand(1000..2000)
+  int64  complete_reward_cents = 9;  // rand(2000..4000)
+}
