@@ -3,6 +3,12 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+### Docs ###
+docs/
+AGENTS.md
+CHANGELOG.md
+CONTEXT.md
+
 ### IntelliJ IDEA ###
 .idea/
 .idea/modules.xml
