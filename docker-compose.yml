@@ -105,6 +105,22 @@ services:
       ATES_DB_PASSWORD: ates
       ATES_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
 
+  gateway:
+    image: ates-gateway:latest
+    container_name: ates-gateway
+    depends_on:
+      auth:
+        condition: service_started
+    ports:
+      - "10002:10002"
+    environment:
+      ATES_SERVER_PORT: 10002
+      ATES_JWT_KEYS_URL: http://auth:10001/auth/keys
+      ATES_SERVICES_AUTH_BASE_URL: http://auth:10001
+      ATES_SERVICES_TASK_SERVICE_BASE_URL: http://task-service:10003
+      ATES_SERVICES_ACCOUNTING_BASE_URL: http://accounting:10004
+      ATES_SERVICES_ANALYTICS_BASE_URL: http://analytics:10005
+
 volumes:
   postgres-data:
   grafana-data:

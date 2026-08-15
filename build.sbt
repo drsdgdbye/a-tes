@@ -8,6 +8,9 @@ val zioConfigVersion = "4.0.8"
 val zioLoggingVersion = "2.5.3"
 val zioKafkaVersion  = "3.7.1"
 val tapirVersion     = "1.13.31"
+val zioHttpVersion   = "3.11.3"
+val zioMetricsVersion = "2.5.6"
+val rezilienceVersion = "0.10.4"
 val quillVersion     = "4.8.6"
 val flywayVersion    = "13.3.0"
 val hikariVersion    = "7.1.0"
@@ -102,8 +105,35 @@ lazy val notification = project
 
 lazy val gateway = project
   .in(file("gateway"))
-  .settings(name := "a-tes-gateway")
+  .settings(
+    name := "a-tes-gateway",
+    libraryDependencies ++= Seq(
+      "dev.zio"                %% "zio"                            % zioVersion,
+      "dev.zio"                %% "zio-json"                       % zioJsonVersion,
+      "dev.zio"                %% "zio-config"                     % zioConfigVersion,
+      "dev.zio"                %% "zio-config-magnolia"            % zioConfigVersion,
+      "dev.zio"                %% "zio-config-typesafe"            % zioConfigVersion,
+      "dev.zio"                %% "zio-logging"                    % zioLoggingVersion,
+      "dev.zio"                %% "zio-logging-slf4j2-bridge"      % zioLoggingVersion,
+      "dev.zio"                %% "zio-http"                       % zioHttpVersion,
+      "dev.zio"                %% "zio-metrics-connectors"         % zioMetricsVersion,
+      "dev.zio"                %% "zio-metrics-connectors-prometheus" % zioMetricsVersion,
+      "nl.vroste"              %% "rezilience"                     % rezilienceVersion,
+      "com.nimbusds"           % "nimbus-jose-jwt"                 % nimbusVersion,
+      "ch.qos.logback"         % "logback-classic"                 % logbackVersion % Runtime,
+      "dev.zio"                %% "zio-test"                       % zioVersion % Test,
+      "dev.zio"                %% "zio-test-sbt"                   % zioVersion % Test
+    ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+    Compile / mainClass := Some("inc.uberpopug.gateway.Main"),
+    Docker / packageName := "ates-gateway",
+    dockerBaseImage := "eclipse-temurin:21-jre",
+    dockerExposedPorts := Seq(10002),
+    dockerUpdateLatest := true,
+    Universal / javaOptions ++= Seq("-Duser.timezone=UTC")
+  )
   .dependsOn(common)
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
 
 lazy val root = project
   .in(file("."))
