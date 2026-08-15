@@ -31,6 +31,18 @@ object AuthEndpoints:
       .out(jsonBody[TokenResponse])
       .errorOut(jsonErrorOut)
 
+  /** `POST /auth/register` — саморегистрация с ролью Popug и auto-login. */
+  val register: PublicEndpoint[RegisterRequest, (StatusCode, ErrorResponse), TokenResponse, Any] =
+    endpoint.post
+      .in("auth" / "register")
+      .in(jsonBody[RegisterRequest])
+      .out(jsonBody[TokenResponse])
+      .errorOut(jsonErrorOut)
+
+  /** `GET /auth/config` — публичные capabilities (например, выключенная регистрация). */
+  val config: PublicEndpoint[Unit, Unit, AuthConfigResponse, Any] =
+    endpoint.get.in("auth" / "config").out(jsonBody[AuthConfigResponse])
+
   /** `POST /auth/refresh` — ротация refresh-токена. */
   val refresh: PublicEndpoint[RefreshRequest, (StatusCode, ErrorResponse), TokenResponse, Any] =
     endpoint.post
@@ -86,6 +98,37 @@ object AuthEndpoints:
       .out(jsonBody[UserResponse])
       .errorOut(jsonErrorOut)
 
+  /** `POST /users/me/password` — смена собственного пароля (204). */
+  val changePassword: Endpoint[String, ChangePasswordRequest, (StatusCode, ErrorResponse), Unit, Any] =
+    secured.post
+      .in("users" / "me" / "password")
+      .in(jsonBody[ChangePasswordRequest])
+      .out(statusCode(StatusCode.NoContent))
+      .errorOut(jsonErrorOut)
+
+  /** `PATCH /users/{id}/password` — сброс пароля пользователя админом (204). */
+  val resetPassword: Endpoint[String, (UUID, ResetPasswordRequest), (StatusCode, ErrorResponse), Unit, Any] =
+    secured.patch
+      .in("users" / path[UUID] / "password")
+      .in(jsonBody[ResetPasswordRequest])
+      .out(statusCode(StatusCode.NoContent))
+      .errorOut(jsonErrorOut)
+
   /** Все эндпоинты сервиса для монтажа в HTTP-сервер. */
   val all: List[AnyEndpoint] =
-    List(health, ready, login, refresh, logout, keys, createUser, listUsers, getUser, updateUser)
+    List(
+      health,
+      ready,
+      login,
+      register,
+      config,
+      refresh,
+      logout,
+      keys,
+      createUser,
+      listUsers,
+      getUser,
+      updateUser,
+      changePassword,
+      resetPassword
+    )

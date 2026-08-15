@@ -25,4 +25,5 @@ object ErrorMapping:
       case AccessDenied(message)        => (StatusCode.Forbidden, ErrorResponse("FORBIDDEN", message))
       case TokenInvalid(message)        => (StatusCode.Unauthorized, ErrorResponse("UNAUTHORIZED", message))
       case RefreshTokenInvalid(message) => (StatusCode.Unauthorized, ErrorResponse("UNAUTHORIZED", message))
-      case PersistenceError(message)    => (StatusCode.InternalServerError, ErrorResponse("INTERNAL_ERROR", message))
+      case RegistrationDisabled      => (StatusCode.Forbidden, ErrorResponse("FORBIDDEN", "Registration is disabled"))
+      case PersistenceError(message) => (StatusCode.InternalServerError, ErrorResponse("INTERNAL_ERROR", message))

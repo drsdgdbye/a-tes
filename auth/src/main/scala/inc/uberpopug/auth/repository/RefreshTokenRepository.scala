@@ -17,6 +17,7 @@ final case class RefreshTokenRow(
     id: UUID,
     userId: UUID,
     hash: String,
+    version: Int,
     expiresAt: Instant,
     revoked: Boolean,
     createdAt: Instant

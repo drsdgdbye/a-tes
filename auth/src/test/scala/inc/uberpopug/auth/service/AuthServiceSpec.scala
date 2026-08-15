@@ -9,7 +9,7 @@ import zio.*
 import zio.test.*
 import zio.test.Assertion.*
 
-import inc.uberpopug.auth.config.JwtConfig
+import inc.uberpopug.auth.config.{AuthConfig, JwtConfig}
 import inc.uberpopug.auth.domain.*
 import inc.uberpopug.auth.repository.*
 import inc.uberpopug.common.domain.DomainError
@@ -34,6 +34,9 @@ final case class UserRepoInMemory(state: Ref[UserRepoState]) extends UserReposit
     state.get.map(_.users.values.toList.sortBy(_.createdAt).slice(offset, offset + limit))
 
   def update(user: User): ZIO[Any, DomainError, Unit] =
+    state.update(s => s.copy(users = s.users + (user.id.value -> user)))
+
+  def updatePassword(user: User): ZIO[Any, DomainError, Unit] =
     state.update(s => s.copy(users = s.users + (user.id.value -> user)))
 
 /** In-memory реализация RefreshTokenRepository для тестов на Ref. */
@@ -65,7 +68,9 @@ object AuthServiceSpec extends ZIOSpecDefault:
     TokenServiceLive(cfg, generator.generateKeyPair())
 
   /** Собирает AuthServiceLive на in-memory репозиториях и возвращает их Ref'ы. */
-  private def makeService: ZIO[Any, Nothing, (AuthService, Ref[UserRepoState], Ref[Map[UUID, RefreshTokenRow]])] =
+  private def makeService(
+      authConfig: AuthConfig = AuthConfig(registrationEnabled = true)
+  ): ZIO[Any, Nothing, (AuthService, Ref[UserRepoState], Ref[Map[UUID, RefreshTokenRow]])] =
     for
       usersRef <- Ref.make(UserRepoState())
       tokensRef <- Ref.make(Map.empty[UUID, RefreshTokenRow])
@@ -74,7 +79,8 @@ object AuthServiceSpec extends ZIOSpecDefault:
         UserRepoInMemory(usersRef),
         RefreshTokenRepoInMemory(tokensRef),
         PasswordHasherLive,
-        tokenService
+        tokenService,
+        authConfig
       ),
       usersRef,
       tokensRef
@@ -109,7 +115,7 @@ object AuthServiceSpec extends ZIOSpecDefault:
         test("succeeds with valid credentials") {
           withLiveClock {
             for
-              tuple <- makeService
+              tuple <- makeService()
               (service, usersRef, _) = tuple
               _ <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
               pair <- service.login("popug@ates.io", "secret123")
@@ -119,7 +125,7 @@ object AuthServiceSpec extends ZIOSpecDefault:
         test("fails with an unknown email") {
           withLiveClock {
             for
-              service <- makeService.map(_._1)
+              service <- makeService().map(_._1)
               result <- service.login("ghost@ates.io", "secret123").exit
             yield assert(result)(fails(equalTo(InvalidCredentials)))
           }
@@ -127,7 +133,7 @@ object AuthServiceSpec extends ZIOSpecDefault:
         test("fails with a wrong password") {
           withLiveClock {
             for
-              tuple <- makeService
+              tuple <- makeService()
               (service, usersRef, _) = tuple
               _ <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
               result <- service.login("popug@ates.io", "wrong-password").exit
@@ -137,7 +143,7 @@ object AuthServiceSpec extends ZIOSpecDefault:
         test("fails for a disabled user") {
           withLiveClock {
             for
-              tuple <- makeService
+              tuple <- makeService()
               (service, usersRef, _) = tuple
               _ <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug, UserStatus.Disabled)
               userId <- usersRef.get.map(_.users.values.head.id.value.toString)
@@ -146,11 +152,52 @@ object AuthServiceSpec extends ZIOSpecDefault:
           }
         }
       ),
+      suite("register")(
+        test("registers a popug with auto-login and writes a UserCreated outbox record") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              pair <- service.register("New Popug", "new@ates.io", "pass123")
+              user <- usersRef.get.map(_.users.values.find(_.email.value == "new@ates.io"))
+              login <- service.login("new@ates.io", "pass123").exit
+              outbox <- usersRef.get.map(_.outbox)
+            yield assertTrue(
+              user.exists(_.role == Role.Popug),
+              user.exists(_.status == UserStatus.Active),
+              pair.accessToken.value.nonEmpty,
+              pair.refreshToken.value.nonEmpty,
+              login.isSuccess,
+              outbox.size == 1,
+              outbox.head.eventType == "UserCreated"
+            )
+          }
+        },
+        test("fails on a duplicate email") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              _ <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
+              result <- service.register("Clone", "popug@ates.io", "pass123").exit
+            yield assert(result)(fails(isSubtype[EmailAlreadyExists](anything)))
+          }
+        },
+        test("fails when registration is disabled") {
+          withLiveClock {
+            for
+              tuple <- makeService(AuthConfig(registrationEnabled = false))
+              (service, _, _) = tuple
+              result <- service.register("New Popug", "new@ates.io", "pass123").exit
+            yield assert(result)(fails(equalTo(RegistrationDisabled)))
+          }
+        }
+      ),
       suite("refresh")(
         test("rotates the refresh token and revokes the previous one") {
           withLiveClock {
             for
-              tuple <- makeService
+              tuple <- makeService()
               (service, usersRef, _) = tuple
               _ <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
               pair <- service.login("popug@ates.io", "secret123")
@@ -163,7 +210,7 @@ object AuthServiceSpec extends ZIOSpecDefault:
         test("fails for an unknown refresh token") {
           withLiveClock {
             for
-              service <- makeService.map(_._1)
+              service <- makeService().map(_._1)
               result <- service.refresh(UUID.randomUUID().toString).exit
             yield assert(result)(fails(isSubtype[RefreshTokenInvalid](anything)))
           }
@@ -173,7 +220,7 @@ object AuthServiceSpec extends ZIOSpecDefault:
         test("denies non-admin actors") {
           withLiveClock {
             for
-              tuple <- makeService
+              tuple <- makeService()
               (service, usersRef, _) = tuple
               popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
               result <- service
@@ -185,7 +232,7 @@ object AuthServiceSpec extends ZIOSpecDefault:
         test("creates a user and writes a UserCreated outbox record") {
           withLiveClock {
             for
-              tuple <- makeService
+              tuple <- makeService()
               (service, usersRef, _) = tuple
               admin <- seedUser(usersRef, "Admin", "admin@ates.io", "admin-pass", Role.Admin)
               created <- service.createUser(
@@ -207,7 +254,7 @@ object AuthServiceSpec extends ZIOSpecDefault:
         test("fails on a duplicate email") {
           withLiveClock {
             for
-              tuple <- makeService
+              tuple <- makeService()
               (service, usersRef, _) = tuple
               admin <- seedUser(usersRef, "Admin", "admin@ates.io", "admin-pass", Role.Admin)
               _ <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
@@ -222,7 +269,7 @@ object AuthServiceSpec extends ZIOSpecDefault:
         test("denies non-admin actors") {
           withLiveClock {
             for
-              tuple <- makeService
+              tuple <- makeService()
               (service, usersRef, _) = tuple
               popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
               result <- service
@@ -234,7 +281,7 @@ object AuthServiceSpec extends ZIOSpecDefault:
         test("forbids an admin from disabling themselves") {
           withLiveClock {
             for
-              tuple <- makeService
+              tuple <- makeService()
               (service, usersRef, _) = tuple
               admin <- seedUser(usersRef, "Admin", "admin@ates.io", "admin-pass", Role.Admin)
               result <- service
@@ -246,7 +293,7 @@ object AuthServiceSpec extends ZIOSpecDefault:
         test("admin disables another user and revokes their refresh tokens") {
           withLiveClock {
             for
-              tuple <- makeService
+              tuple <- makeService()
               (service, usersRef, tokensRef) = tuple
               admin <- seedUser(usersRef, "Admin", "admin@ates.io", "admin-pass", Role.Admin)
               popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
@@ -268,11 +315,76 @@ object AuthServiceSpec extends ZIOSpecDefault:
       suite("listUsers")(
         test("denies non-admin actors") {
           for
-            tuple <- makeService
+            tuple <- makeService()
             (service, usersRef, _) = tuple
             popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
             result <- service.listUsers(10, 0, AuthenticatedUser(popug.id, Role.Popug)).exit
           yield assert(result)(fails(equalTo(AccessDenied("Admin privileges required"))))
+        }
+      ),
+      suite("changePassword")(
+        test("changes own password, bumps version and invalidates the previous refresh token") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
+              pair <- service.login("popug@ates.io", "secret123")
+              _ <- service.changePassword("secret123", "new-secret456", AuthenticatedUser(popug.id, Role.Popug))
+              newLogin <- service.login("popug@ates.io", "new-secret456").exit
+              oldLogin <- service.login("popug@ates.io", "secret123").exit
+              staleRefresh <- service.refresh(pair.refreshToken.value).exit
+            yield assertTrue(
+              newLogin.isSuccess
+            ) && assert(oldLogin)(fails(equalTo(InvalidCredentials))) && assert(staleRefresh)(
+              fails(isSubtype[RefreshTokenInvalid](anything))
+            )
+          }
+        },
+        test("fails with a wrong current password") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
+              result <- service
+                .changePassword("wrong-password", "new-secret456", AuthenticatedUser(popug.id, Role.Popug))
+                .exit
+            yield assert(result)(fails(equalTo(InvalidCredentials)))
+          }
+        }
+      ),
+      suite("resetPassword")(
+        test("denies non-admin actors") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
+              result <- service
+                .resetPassword(popug.id, "new-secret456", AuthenticatedUser(popug.id, Role.Popug))
+                .exit
+            yield assert(result)(fails(equalTo(AccessDenied("Admin privileges required"))))
+          }
+        },
+        test("resets the password, bumps version and invalidates old credentials and refresh tokens") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              admin <- seedUser(usersRef, "Admin", "admin@ates.io", "admin-pass", Role.Admin)
+              popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
+              pair <- service.login("popug@ates.io", "secret123")
+              _ <- service.resetPassword(popug.id, "reset-secret789", AuthenticatedUser(admin.id, Role.Admin))
+              newLogin <- service.login("popug@ates.io", "reset-secret789").exit
+              oldLogin <- service.login("popug@ates.io", "secret123").exit
+              staleRefresh <- service.refresh(pair.refreshToken.value).exit
+            yield assertTrue(
+              newLogin.isSuccess
+            ) && assert(oldLogin)(fails(equalTo(InvalidCredentials))) && assert(staleRefresh)(
+              fails(isSubtype[RefreshTokenInvalid](anything))
+            )
+          }
         }
       )
     )

@@ -4,12 +4,13 @@ import sttp.model.StatusCode
 import sttp.tapir.ztapir.*
 import zio.{Clock, ZIO, ZLayer}
 
+import inc.uberpopug.auth.config.AuthConfig
 import inc.uberpopug.auth.domain.{Role, User, UserStatus}
 import inc.uberpopug.auth.service.{AuthService, AuthenticatedUser, Jwk, TokenPair, TokenService}
 import inc.uberpopug.common.domain.UserId
 
 /** Server logic: связывает tapir-эндпоинты с сервисами и маппингом ошибок. */
-final case class AuthServerLogic(authService: AuthService, tokenService: TokenService):
+final case class AuthServerLogic(authService: AuthService, tokenService: TokenService, authConfig: AuthConfig):
   import AuthEndpoints.*
   import AuthServerLogic.*
 
@@ -17,12 +18,16 @@ final case class AuthServerLogic(authService: AuthService, tokenService: TokenSe
   private def security(token: String): ZIO[Clock, (StatusCode, ErrorResponse), AuthenticatedUser] =
     tokenService.verifyAccess(token).mapError(ErrorMapping.toApiError)
 
-  /** Публичные эндпоинты: login, refresh, logout, health, ready, keys. */
+  /** Публичные эндпоинты: login, register, config, refresh, logout, health, ready, keys. */
   private val publicEndpoints: List[ZServerEndpoint[Clock, Any]] =
     List(
       login.zServerLogic[Clock] { req =>
         authService.login(req.login, req.password).mapError(ErrorMapping.toApiError).map(toTokenResponse)
       },
+      register.zServerLogic[Clock] { req =>
+        authService.register(req.name, req.email, req.password).mapError(ErrorMapping.toApiError).map(toTokenResponse)
+      },
+      config.zServerLogic[Clock](_ => ZIO.succeed(AuthConfigResponse(authConfig.registrationEnabled))),
       refresh.zServerLogic[Clock] { req =>
         authService.refresh(req.refreshToken).mapError(ErrorMapping.toApiError).map(toTokenResponse)
       },
@@ -72,6 +77,21 @@ final case class AuthServerLogic(authService: AuthService, tokenService: TokenSe
             status <- ZIO.foreach(req.status)(s => ZIO.fromEither(UserStatus.from(s))).mapError(ErrorMapping.toApiError)
             user <- authService.updateUser(userId, role, status, actor).mapError(ErrorMapping.toApiError)
           yield toUserResponse(user)
+        },
+      changePassword
+        .zServerSecurityLogic(security)
+        .serverLogic[Clock] { actor => req =>
+          authService
+            .changePassword(req.currentPassword, req.newPassword, actor)
+            .mapError(ErrorMapping.toApiError)
+        },
+      resetPassword
+        .zServerSecurityLogic(security)
+        .serverLogic[Clock] { actor => (id, req) =>
+          for
+            userId <- ZIO.fromEither(UserId.from(id.toString)).mapError(ErrorMapping.toApiError)
+            _ <- authService.resetPassword(userId, req.newPassword, actor).mapError(ErrorMapping.toApiError)
+          yield ()
         }
     )
 
@@ -107,6 +127,6 @@ object AuthServerLogic:
   def toJwkDto(jwk: Jwk): JwkDto =
     JwkDto(jwk.kid, jwk.kty, jwk.crv, jwk.x, jwk.y, jwk.alg, jwk.use)
 
-  /** Слой server logic поверх AuthService и TokenService. */
-  val layer: ZLayer[AuthService & TokenService, Nothing, AuthServerLogic] =
-    ZLayer.fromFunction(AuthServerLogic(_, _))
+  /** Слой server logic поверх AuthService, TokenService и конфига аутентификации. */
+  val layer: ZLayer[AuthService & TokenService & AuthConfig, Nothing, AuthServerLogic] =
+    ZLayer.fromFunction(AuthServerLogic(_, _, _))

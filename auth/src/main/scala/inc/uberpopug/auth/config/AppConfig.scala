@@ -10,7 +10,8 @@ final case class AppConfig(
     database: DatabaseConfig,
     kafka: KafkaConfig,
     jwt: JwtConfig,
-    outbox: OutboxConfig
+    outbox: OutboxConfig,
+    auth: AuthConfig
 )
 
 /** HTTP-настройки сервера. */
@@ -27,6 +28,9 @@ final case class JwtConfig(issuer: String, accessTtlSeconds: Long, refreshTtlSec
 
 /** Настройки polling-цикла transactional outbox. */
 final case class OutboxConfig(batchSize: Int, pollIntervalSeconds: Long)
+
+/** Настройки аутентификации: открытая саморегистрация пользователей. */
+final case class AuthConfig(registrationEnabled: Boolean)
 
 object AppConfig:
   /** Дескриптор конфига, выводимый из case classes с корнем `ates`. */

@@ -7,8 +7,12 @@ aTES (UberPopug Inc Task Exchange).
 
 - Аутентификация по логину/паролю (`POST /auth/login`) с выдачей пары токенов:
   access JWT (15 минут, ES256) и refresh-токен (7 дней, UUIDv4).
+- Саморегистрация (`POST /auth/register`) с ролью `popug` и auto-login; управляется
+  конфиг-флагом (`GET /auth/config` сообщает фронту, включена ли она).
 - Обновление сессии (`POST /auth/refresh`) с ротацией refresh-токена.
 - Завершение сессии (`POST /auth/logout`) — отзыв refresh-токена.
+- Смена собственного пароля (`POST /users/me/password`) и сброс пароля админом
+  (`PATCH /users/{id}/password`) с инкрементом версии учётных данных.
 - Управление пользователями: создание, просмотр, список, изменение роли/статуса
   (админ-операции, self-disable запрещён).
 - Публикация доменного события `UserCreated` в Kafka-топик `auth.user.created`
@@ -40,7 +44,7 @@ auth/
 │   ├── main/
 │   │   ├── resources/
 │   │   │   ├── application.conf            # конфигурация (HOCON)
-│   │   │   └── db/migration/               # Flyway V1..V4
+│   │   │   └── db/migration/               # Flyway V1..V5
 │   │   └── scala/inc/uberpopug/auth/
 │   │       ├── Main.scala                  # точка входа, сборка ZLayer-графа
 │   │       ├── api/                        # tapir-эндпоинты, DTO, маппинг ошибок
@@ -96,6 +100,7 @@ Kafka — `localhost:29092`. При первом старте Flyway созда�
 | `ates.jwt.refreshTtlSeconds` | `ATES_JWT_REFRESH_TTL` | `604800` |
 | `ates.outbox.batchSize` | `ATES_OUTBOX_BATCH_SIZE` | `50` |
 | `ates.outbox.pollIntervalSeconds` | `ATES_OUTBOX_POLL_INTERVAL` | `2` |
+| `ates.auth.registrationEnabled` | `ATES_AUTH_REGISTRATION` | `true` |
 
 ## API
 
@@ -107,6 +112,8 @@ Kafka — `localhost:29092`. При первом старте Flyway созда�
 | GET | `/health` | public | Liveness-проверка |
 | GET | `/ready` | public | Readiness-проверка (в текущей версии без проверки БД) |
 | POST | `/auth/login` | public | Логин, выдача токенов |
+| POST | `/auth/register` | public | Саморегистрация (роль `popug`, auto-login) |
+| GET | `/auth/config` | public | Публичные capabilities (регистрация включена?) |
 | POST | `/auth/refresh` | public | Ротация refresh-токена, выдача новой пары |
 | POST | `/auth/logout` | public | Отзыв refresh-токена |
 | GET | `/auth/keys` | public | Публичный JWK (ES256) |
@@ -114,6 +121,8 @@ Kafka — `localhost:29092`. При первом старте Flyway созда�
 | GET | `/users` | admin | Список пользователей (limit/offset) |
 | GET | `/users/{id}` | любой с JWT | Пользователь по id |
 | PATCH | `/users/{id}` | admin | Изменение роли/статуса |
+| POST | `/users/me/password` | любой с JWT | Смена своего пароля (с проверкой старого) |
+| PATCH | `/users/{id}/password` | admin | Сброс пароля пользователя |
 
 ### Примеры
 
@@ -201,15 +210,17 @@ curl -s localhost:10001/auth/keys
 
 ## Схема БД
 
-- `users` — пользователи (id, name, email UNIQUE, password_hash, role, status).
-- `refresh_tokens` — issued refresh-токены (хранится SHA-256-хэш, не сам токен).
+- `users` — пользователи (id, name, email UNIQUE, password_hash, role, status,
+  version — версия учётных данных, инкрементируется при смене пароля).
+- `refresh_tokens` — issued refresh-токены (хранится SHA-256-хэш, не сам токен;
+  `version` — снапшот версии на момент выдачи, несовпадение → 401).
 - `outbox` — transactional outbox для событий `UserCreated`.
 - `processed_events` — дедупликация полученных событий (зарезервировано).
 
 ## Тесты
 
 ```bash
-sbt auth/test
+sbt "auth/Test/testFull"
 ```
 
 Покрытие: доменная валидация, bcrypt (hash/verify), TokenService (JWT, expiry,

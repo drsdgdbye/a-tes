@@ -13,4 +13,5 @@ enum DomainError:
   case AccessDenied(message: String)
   case TokenInvalid(message: String)
   case RefreshTokenInvalid(message: String)
+  case RegistrationDisabled
   case PersistenceError(message: String)

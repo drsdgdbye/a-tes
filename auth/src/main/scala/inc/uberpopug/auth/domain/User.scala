@@ -14,6 +14,7 @@ final case class User(
     passwordHash: PasswordHash,
     role: Role,
     status: UserStatus,
+    version: Int,
     createdAt: Instant,
     updatedAt: Instant
 )
@@ -31,7 +32,7 @@ object User:
       now: Instant
   ): Either[DomainError, User] =
     validateName(name).map { n =>
-      User(id, n, email, passwordHash, role, UserStatus.Active, now, now)
+      User(id, n, email, passwordHash, role, UserStatus.Active, 0, now, now)
     }
 
   /** Возвращает копию пользователя с новой ролью и обновлённым `updatedAt`. */
@@ -41,6 +42,10 @@ object User:
   /** Возвращает копию пользователя с новым статусом и обновлённым `updatedAt`. */
   def withStatus(user: User, status: UserStatus, now: Instant): User =
     user.copy(status = status, updatedAt = now)
+
+  /** Возвращает копию пользователя с новым паролем: инкрементирует версию учётных данных и обновляет `updatedAt`. */
+  def withPassword(user: User, passwordHash: PasswordHash, now: Instant): User =
+    user.copy(passwordHash = passwordHash, version = user.version + 1, updatedAt = now)
 
   /** Валидирует имя: непустое после trim и не длиннее 255 символов. Возвращает каноническое (обрезанное) значение.
     */

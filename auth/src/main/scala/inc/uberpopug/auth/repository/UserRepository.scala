@@ -20,6 +20,7 @@ final case class UserRow(
     passwordHash: String,
     role: String,
     status: String,
+    version: Int,
     createdAt: Instant,
     updatedAt: Instant
 )
@@ -34,6 +35,7 @@ object UserRow:
       passwordHash = user.passwordHash.value,
       role = user.role.wire,
       status = user.status.wire,
+      version = user.version,
       createdAt = user.createdAt,
       updatedAt = user.updatedAt
     )
@@ -50,6 +52,7 @@ object UserRow:
       passwordHash = PasswordHash(row.passwordHash),
       role = role,
       status = status,
+      version = row.version,
       createdAt = row.createdAt,
       updatedAt = row.updatedAt
     )
@@ -71,6 +74,9 @@ trait UserRepository:
   /** Обновляет имя, роль, статус и `updatedAt` пользователя. */
   def update(user: User): ZIO[Any, DomainError, Unit]
 
+  /** Обновляет хэш пароля, версию учётных данных и `updatedAt` пользователя. */
+  def updatePassword(user: User): ZIO[Any, DomainError, Unit]
+
 object UserRepository:
   /** Слой репозитория поверх Quill-контекста Postgres. */
   val layer: ZLayer[Postgres, Nothing, UserRepository] =
@@ -87,11 +93,10 @@ final case class UserRepositoryLive(ctx: Postgres) extends UserRepository:
       case other => PersistenceError(Option(other.getMessage).getOrElse(other.getClass.getSimpleName))
 
   /** Оборачивает SQL-ошибку; нарушение unique-constraint (`23505`) — `EmailAlreadyExists`. */
-  private def toDomainError(email: Email): Throwable => DomainError =
-    ex =>
-      ex match
-        case e: SQLException if e.getSQLState == "23505" => EmailAlreadyExists(email.value)
-        case other => PersistenceError(Option(other.getMessage).getOrElse(other.getClass.getSimpleName))
+  private def toDomainError(email: Email): Throwable => DomainError = {
+    case e: SQLException if e.getSQLState == "23505" => EmailAlreadyExists(email.value)
+    case other => PersistenceError(Option(other.getMessage).getOrElse(other.getClass.getSimpleName))
+  }
 
   /** Парсит строку БД в доменного пользователя; повреждённая строка — ошибка. */
   private def parseRow(row: UserRow): ZIO[Any, DomainError, User] =
@@ -147,6 +152,19 @@ final case class UserRepositoryLive(ctx: Postgres) extends UserRepository:
           _.name -> lift(user.name),
           _.role -> lift(user.role.wire),
           _.status -> lift(user.status.wire),
+          _.updatedAt -> lift(user.updatedAt)
+        )
+    ).unit
+      .mapError(toPersistenceError)
+
+  /** Обновляет хэш пароля, версию и `updatedAt` по id. */
+  def updatePassword(user: User): ZIO[Any, DomainError, Unit] =
+    run(
+      query[UserRow]
+        .filter(_.id == lift(user.id.value))
+        .update(
+          _.passwordHash -> lift(user.passwordHash.value),
+          _.version -> lift(user.version),
           _.updatedAt -> lift(user.updatedAt)
         )
     ).unit

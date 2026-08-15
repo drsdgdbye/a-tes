@@ -7,7 +7,7 @@ import zio.{Clock, ZIO, ZIOAppDefault, ZLayer}
 import zio.http.Server
 
 import inc.uberpopug.auth.api.AuthServerLogic
-import inc.uberpopug.auth.config.{AppConfig, JwtConfig}
+import inc.uberpopug.auth.config.{AppConfig, AuthConfig, JwtConfig}
 import inc.uberpopug.auth.db.{DataSourceLayer, DbContext, Migrations}
 import inc.uberpopug.auth.repository.{OutboxRepository, RefreshTokenRepository, UserRepository}
 import inc.uberpopug.auth.service.{AuthService, OutboxRelay, PasswordHasher, TokenService}
@@ -17,6 +17,10 @@ object Main extends ZIOAppDefault:
   /** Выделяет секцию `jwt` из AppConfig как отдельный слой для TokenService. */
   private val jwtConfig: ZLayer[AppConfig, Nothing, JwtConfig] =
     ZLayer.fromFunction((cfg: AppConfig) => cfg.jwt)
+
+  /** Выделяет секцию `auth` из AppConfig как отдельный слой для AuthService и server logic. */
+  private val authConfig: ZLayer[AppConfig, Nothing, AuthConfig] =
+    ZLayer.fromFunction((cfg: AppConfig) => cfg.auth)
 
   /** Единый граф зависимостей приложения: конфиг, пул соединений, Quill-контекст, репозитории, сервисы и tapir-server
     * logic. Собирается только здесь (SSOT композиции).
@@ -31,6 +35,7 @@ object Main extends ZIOAppDefault:
       RefreshTokenRepository.layer,
       PasswordHasher.layer,
       jwtConfig,
+      authConfig,
       TokenService.layer,
       AuthService.layer,
       AuthServerLogic.layer,
