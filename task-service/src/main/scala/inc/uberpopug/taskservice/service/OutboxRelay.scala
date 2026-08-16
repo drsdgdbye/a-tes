@@ -41,10 +41,7 @@ final case class OutboxRelayLive(
 
   /** Запускает бесконечный цикл публикации (никогда не завершается). */
   def run: ZIO[Any, Nothing, Unit] =
-    (for
-      _ <- ZIO.logInfo("OutboxRelay started")
-      _ <- loop
-    yield ()).forever
+    ZIO.logInfo("OutboxRelay started") *> loop.forever
 
   /** Одна итерация: claim батча, публикация каждого события с пометкой published (ошибки отдельных записей логируются и
     * не роняют цикл), затем пауза до следующего опроса.

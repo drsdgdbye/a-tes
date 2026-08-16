@@ -77,7 +77,9 @@ final case class DownstreamClient(services: ServicesConfig):
     val sanitized = Headers.fromIterable(
       headers.iterator
         .filterNot(header =>
-          hopByHopHeaders.contains(header.headerName) || identityHeaders.contains(header.headerName.toLowerCase)
+          hopByHopHeaders.contains(header.headerName.toLowerCase) || identityHeaders.contains(
+            header.headerName.toLowerCase
+          )
         )
         .toList
     )

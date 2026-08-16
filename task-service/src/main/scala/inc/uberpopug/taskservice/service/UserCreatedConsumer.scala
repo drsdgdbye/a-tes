@@ -50,7 +50,9 @@ final case class UserCreatedConsumerLive(
     clock: Clock
 ) extends UserCreatedConsumer:
 
-  /** Обрабатывает одно событие: дедупликация, парсинг, добавление попуга в кэш. */
+  /** Обрабатывает события: дедупликация, парсинг, добавление попуга в кэш. Бесконечный цикл: при фатальной ошибке
+    * потока логирует её и переподписывается заново.
+    */
   def run: ZIO[Any, Nothing, Unit] =
     ZIO.logInfo("UserCreatedConsumer started") *>
       stream
@@ -64,6 +66,7 @@ final case class UserCreatedConsumerLive(
         .mapZIO(_.commit)
         .runDrain
         .catchAll(error => ZIO.logError(s"UserCreatedConsumer stream failed: ${describe(error)}"))
+        .forever
 
   /** Поток записей топика `auth.user.created` (ключ — string, значение — protobuf-байты). */
   private val stream: ZStream[Any, Throwable, zio.kafka.consumer.CommittableRecord[String, Array[Byte]]] =
