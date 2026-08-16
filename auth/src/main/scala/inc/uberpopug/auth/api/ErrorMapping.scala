@@ -25,5 +25,10 @@ object ErrorMapping:
       case AccessDenied(message)        => (StatusCode.Forbidden, ErrorResponse("FORBIDDEN", message))
       case TokenInvalid(message)        => (StatusCode.Unauthorized, ErrorResponse("UNAUTHORIZED", message))
       case RefreshTokenInvalid(message) => (StatusCode.Unauthorized, ErrorResponse("UNAUTHORIZED", message))
-      case RegistrationDisabled      => (StatusCode.Forbidden, ErrorResponse("FORBIDDEN", "Registration is disabled"))
+      case RegistrationDisabled => (StatusCode.Forbidden, ErrorResponse("FORBIDDEN", "Registration is disabled"))
+      case TaskNotFound(taskId) => (StatusCode.NotFound, ErrorResponse("NOT_FOUND", s"Task not found: $taskId"))
+      case BusinessRuleViolation(message) =>
+        (StatusCode.Conflict, ErrorResponse("BUSINESS_RULE_VIOLATION", message))
+      case OptimisticLockConflict(message) =>
+        (StatusCode.Conflict, ErrorResponse("CONFLICT", message))
       case PersistenceError(message) => (StatusCode.InternalServerError, ErrorResponse("INTERNAL_ERROR", message))

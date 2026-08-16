@@ -85,8 +85,43 @@ lazy val auth = project
 
 lazy val taskService = project
   .in(file("task-service"))
-  .settings(name := "a-tes-task-service")
+  .settings(
+    name := "a-tes-task-service",
+    libraryDependencies ++= Seq(
+      "dev.zio"                    %% "zio"                            % zioVersion,
+      "dev.zio"                    %% "zio-streams"                    % zioVersion,
+      "dev.zio"                    %% "zio-json"                       % zioJsonVersion,
+      "dev.zio"                    %% "zio-config"                     % zioConfigVersion,
+      "dev.zio"                    %% "zio-config-magnolia"            % zioConfigVersion,
+      "dev.zio"                    %% "zio-config-typesafe"            % zioConfigVersion,
+      "dev.zio"                    %% "zio-logging"                    % zioLoggingVersion,
+      "dev.zio"                    %% "zio-logging-slf4j2-bridge"      % zioLoggingVersion,
+      "dev.zio"                    %% "zio-kafka"                      % zioKafkaVersion,
+      "dev.zio"                    %% "zio-metrics-connectors"         % zioMetricsVersion,
+      "dev.zio"                    %% "zio-metrics-connectors-prometheus" % zioMetricsVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-zio"                     % tapirVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-zio-http-server"         % tapirVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-json-zio"                % tapirVersion,
+      "io.getquill"                %% "quill-jdbc-zio"                 % quillVersion,
+      "org.flywaydb"                % "flyway-core"                    % flywayVersion,
+      "org.flywaydb"                % "flyway-database-postgresql"     % flywayVersion,
+      "com.zaxxer"                  % "HikariCP"                       % hikariVersion,
+      "org.postgresql"              % "postgresql"                     % postgresVersion,
+      "com.thesamet.scalapb"       %% "scalapb-runtime"                % scalapb.compiler.Version.scalapbVersion,
+      "ch.qos.logback"              % "logback-classic"                % logbackVersion % Runtime,
+      "dev.zio"                    %% "zio-test"                       % zioVersion % Test,
+      "dev.zio"                    %% "zio-test-sbt"                   % zioVersion % Test
+    ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+    Compile / mainClass := Some("inc.uberpopug.taskservice.Main"),
+    Docker / packageName := "ates-task-service",
+    dockerBaseImage := "eclipse-temurin:21-jre",
+    dockerExposedPorts := Seq(10003),
+    dockerUpdateLatest := true,
+    Universal / javaOptions ++= Seq("-Duser.timezone=UTC")
+  )
   .dependsOn(common)
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
 
 lazy val accounting = project
   .in(file("accounting"))

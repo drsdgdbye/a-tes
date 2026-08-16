@@ -111,6 +111,8 @@ services:
     depends_on:
       auth:
         condition: service_started
+      task-service:
+        condition: service_started
     ports:
       - "10002:10002"
     environment:
@@ -120,6 +122,23 @@ services:
       ATES_SERVICES_TASK_SERVICE_BASE_URL: http://task-service:10003
       ATES_SERVICES_ACCOUNTING_BASE_URL: http://accounting:10004
       ATES_SERVICES_ANALYTICS_BASE_URL: http://analytics:10005
+
+  task-service:
+    image: ates-task-service:latest
+    container_name: ates-task-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    ports:
+      - "10003:10003"
+    environment:
+      ATES_SERVER_PORT: 10003
+      ATES_DB_URL: jdbc:postgresql://postgres:5432/ates_task
+      ATES_DB_USER: ates
+      ATES_DB_PASSWORD: ates
+      ATES_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
 
 volumes:
   postgres-data:

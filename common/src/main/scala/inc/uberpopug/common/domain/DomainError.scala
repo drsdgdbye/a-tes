@@ -15,3 +15,8 @@ enum DomainError:
   case RefreshTokenInvalid(message: String)
   case RegistrationDisabled
   case PersistenceError(message: String)
+
+  /** Task Service. */
+  case TaskNotFound(taskId: String)
+  case BusinessRuleViolation(message: String)
+  case OptimisticLockConflict(message: String)

@@ -29,11 +29,17 @@ object GatewayProxySpec extends ZIOSpecDefault:
   private final class UnusedFetcher extends KeysFetcher:
     def fetch: ZIO[Any, Throwable, JwksResponse] = ZIO.succeed(jwt.jwks)
 
-  /** Mock downstream: публичный путь Auth и защищённый путь задач на одном сервере. */
+  /** Mock downstream: публичный путь Auth и защищённый путь задач на одном сервере (задачи эхо-ируют identity-заголовки
+    * для проверки инжекта).
+    */
   private val mockDownstream: Routes[Any, Response] =
     Routes(
       Method.GET / "auth" / "login" -> handler(Response.json("""{"ok":true}""")),
-      Method.GET / "tasks" -> handler(Response.json("""{"tasks":[]}"""))
+      Method.GET / "tasks" -> handler { (request: Request) =>
+        val userId = request.headers.get("X-Auth-User-Id").getOrElse("missing")
+        val role = request.headers.get("X-Auth-User-Role").getOrElse("missing")
+        Response.json(s"""{"tasks":[],"userId":"$userId","role":"$role"}""")
+      }
     )
 
   private def servicesAt(port: Int): ServicesConfig =
@@ -89,6 +95,29 @@ object GatewayProxySpec extends ZIOSpecDefault:
           routes
             .runZIO(Request.get("http://localhost/tasks").addHeader(Header.Authorization.Bearer(token)))
             .map(response => assertTrue(response.status == Status.Ok))
+        }
+      },
+      test("injects verified identity headers and strips spoofed ones") {
+        val token = jwt.sign(subject, issuer, "manager", future)
+        withGateway { (_, routes) =>
+          routes
+            .runZIO(
+              Request
+                .get("http://localhost/tasks")
+                .addHeader(Header.Authorization.Bearer(token))
+                .addHeader(Header.Custom("X-Auth-User-Id", "spoofed-user"))
+                .addHeader(Header.Custom("X-Auth-User-Role", "admin"))
+            )
+            .flatMap { response =>
+              response.body.asString.map { body =>
+                assertTrue(
+                  response.status == Status.Ok,
+                  body.contains(s""""userId":"$subject""""),
+                  body.contains(""""role":"manager""""),
+                  !body.contains("spoofed-user")
+                )
+              }
+            }
         }
       },
       test("rejects a protected path without a token") {

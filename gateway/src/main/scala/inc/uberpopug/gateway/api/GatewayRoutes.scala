@@ -6,7 +6,7 @@ import zio.http.*
 import zio.metrics.connectors.prometheus.PrometheusPublisher
 
 import inc.uberpopug.gateway.proxy.*
-import inc.uberpopug.gateway.security.{JwtVerificationError, KeyManager}
+import inc.uberpopug.gateway.security.{Authenticated, JwtVerificationError, KeyManager}
 
 /** Тело JSON-ошибки Gateway (единый контракт `{ "error": ..., "message": ... }`). */
 final case class ErrorBody(error: String, message: String)
@@ -51,9 +51,9 @@ final case class GatewayRoutes(
         downstream <- ZIO
           .fromOption(RouteResolver.resolve(path))
           .mapError(_ => errorResponse("not_found", s"Unknown route: $path", Status.NotFound))
-        _ <- checkAuthorization(request, path)
+        identity <- checkAuthorization(request, path)
         downstreamRequest <- ZIO
-          .fromEither(downstreamClient.build(downstream, request, body))
+          .fromEither(downstreamClient.build(downstream, request, body, identity))
           .mapError(message => errorResponse("internal_error", message, Status.InternalServerError))
         response <- resilience
           .forDownstream(downstream)
@@ -62,15 +62,16 @@ final case class GatewayRoutes(
       yield response
     program.provideEnvironment(ZEnvironment(client, clock)).catchAll(response => ZIO.succeed(response))
 
-  private def checkAuthorization(request: Request, path: String): ZIO[GatewayEnv, Response, Unit] =
-    if RouteResolver.isPublic(path) then ZIO.unit
+  /** Проверяет JWT и возвращает верифицированную личность для проброса downstream; публичные пути — `None`. */
+  private def checkAuthorization(request: Request, path: String): ZIO[GatewayEnv, Response, Option[Authenticated]] =
+    if RouteResolver.isPublic(path) then ZIO.none
     else
       keyManager.verifier.flatMap {
         case None => ZIO.fail(errorResponse("service_unavailable", "JWT keys not loaded", Status.ServiceUnavailable))
         case Some(verifier) =>
           bearerToken(request) match
             case None      => ZIO.fail(errorResponse("unauthorized", "Missing bearer token", Status.Unauthorized))
-            case Some(raw) => verifier.verify(raw).map(_ => ()).mapError(jwtErrorResponse)
+            case Some(raw) => verifier.verify(raw).map(Some(_)).mapError(jwtErrorResponse)
       }
 
   private def bearerToken(request: Request): Option[String] =

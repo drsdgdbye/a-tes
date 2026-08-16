@@ -38,3 +38,11 @@ object Money:
     def isZero: Boolean = money == 0
 
     def value: BigDecimal = money
+
+    def >(other: Money): Boolean = money > other
+
+    def >=(other: Money): Boolean = money >= other
+
+    def <(other: Money): Boolean = money < other
+
+    def <=(other: Money): Boolean = money <= other
