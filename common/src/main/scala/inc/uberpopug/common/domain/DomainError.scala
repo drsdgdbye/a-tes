@@ -20,3 +20,6 @@ enum DomainError:
   case TaskNotFound(taskId: String)
   case BusinessRuleViolation(message: String)
   case OptimisticLockConflict(message: String)
+
+  /** Accounting Service. */
+  case AccountNotFound(userId: String)
