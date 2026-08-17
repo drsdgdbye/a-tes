@@ -7,7 +7,7 @@ import scala.util.Try
 
 import zio.ZIO
 
-import inc.uberpopug.common.domain.{DomainError, UserId}
+import inc.uberpopug.common.domain.{DomainError, Money, TaskId, UserId}
 import inc.uberpopug.common.domain.DomainError.{AccountNotFound, InvalidValue}
 import inc.uberpopug.accounting.repository.EventStore
 
@@ -16,14 +16,15 @@ import task.task_assigned.TaskAssigned
 import task.task_completed.TaskCompleted
 import task.task_created.TaskCreated
 
-/** Чистая обработка одного Kafka-события: дедупликация через `processed_events`, маппинг в события event store,
+/** Чистая обработка одного Kafka-события: дедупликация через `processed_events`, безопасный парсинг примитивов
+  * (невалидные значения — `InvalidValue` через typed error channel, без исключений), маппинг в события event store,
   * проверка существования счёта. Вынесена из consumer-а для тестируемости без Kafka.
   */
 object AccountingEventProcessor:
   /** `UserCreated` → проекция пользователя + создание счёта с нулевым балансом. */
   def processUserCreated(event: UserCreated, store: EventStore): ZIO[Any, DomainError, Unit] =
     for
-      userId <- ZIO.fromEither(UserId.from(event.userId))
+      userId <- parseUserId(event.userId)
       eventId <- parseUuid(event.eventId)
       _ <- store.upsertUserFromCreated(eventId, userId, event.name, Instant.ofEpochMilli(event.timestamp))
     yield ()
@@ -32,36 +33,79 @@ object AccountingEventProcessor:
   def processTaskCreated(event: TaskCreated, store: EventStore): ZIO[Any, DomainError, Unit] =
     for
       eventId <- parseUuid(event.eventId)
-      _ <- requireAccount(event.assigneeId, store)
-      _ <- store.append(eventId, List(AccountingEventMapper.taskPriceRecorded(event)))
+      taskId <- parseTaskId(event.taskId)
+      assigneeId <- parseUserId(event.assigneeId)
+      _ <- requireAccount(assigneeId, store)
+      _ <- store.append(
+        eventId,
+        List(
+          AccountingEventMapper.taskPriceRecorded(
+            timestamp = Instant.ofEpochMilli(event.timestamp),
+            taskId = taskId,
+            userId = assigneeId,
+            assignFee = Money.fromCents(event.assignFeeCents),
+            completeReward = Money.fromCents(event.completeRewardCents)
+          )
+        )
+      )
     yield ()
 
   /** `TaskAssigned` → списание с нового исполнителя и возврат старому (если был). */
   def processTaskAssigned(event: TaskAssigned, store: EventStore): ZIO[Any, DomainError, Unit] =
     for
       eventId <- parseUuid(event.eventId)
-      accounts = List(event.newAssigneeId) ++ Option.when(event.oldAssigneeId.nonEmpty)(event.oldAssigneeId)
-      _ <- ZIO.foreachDiscard(accounts)(userId => requireAccount(userId, store))
-      _ <- store.append(eventId, AccountingEventMapper.assignedEvents(event))
+      taskId <- parseTaskId(event.taskId)
+      newAssignee <- parseUserId(event.newAssigneeId)
+      oldAssignee <- if event.oldAssigneeId.nonEmpty then parseUserId(event.oldAssigneeId).map(Some(_)) else ZIO.none
+      _ <- requireAccount(newAssignee, store)
+      _ <- ZIO.foreachDiscard(oldAssignee)(assignee => requireAccount(assignee, store))
+      _ <- store.append(
+        eventId,
+        AccountingEventMapper.assignedEvents(
+          timestamp = Instant.ofEpochMilli(event.timestamp),
+          taskId = taskId,
+          newAssignee = newAssignee,
+          oldAssignee = oldAssignee,
+          assignFee = Money.fromCents(event.assignFeeCents)
+        )
+      )
     yield ()
 
   /** `TaskCompleted` → начисление CompleteReward исполнителю. */
   def processTaskCompleted(event: TaskCompleted, store: EventStore): ZIO[Any, DomainError, Unit] =
     for
       eventId <- parseUuid(event.eventId)
-      _ <- requireAccount(event.assigneeId, store)
-      _ <- store.append(eventId, List(AccountingEventMapper.completedReward(event)))
+      taskId <- parseTaskId(event.taskId)
+      assigneeId <- parseUserId(event.assigneeId)
+      _ <- requireAccount(assigneeId, store)
+      _ <- store.append(
+        eventId,
+        List(
+          AccountingEventMapper.completedReward(
+            timestamp = Instant.ofEpochMilli(event.timestamp),
+            taskId = taskId,
+            userId = assigneeId,
+            completeReward = Money.fromCents(event.completeRewardCents)
+          )
+        )
+      )
     yield ()
 
-  /** Событие для несуществующего счёта — poison pill (M-ACC-06): в DLQ. */
-  private def requireAccount(userId: String, store: EventStore): ZIO[Any, DomainError, Unit] =
-    for
-      uid <- ZIO.fromEither(UserId.from(userId))
-      name <- store.findUser(uid)
-      _ <-
-        if name.isDefined then ZIO.unit
-        else ZIO.fail(AccountNotFound(userId))
-    yield ()
+  /** Событие для ещё не существующего счёта — транзиентная ошибка (M-ACC-06): при восстановлении `auth.user.created`
+    * приходит позже, поток прерывается и событие переобрабатывается после переподписки (нагнёт при catch-up).
+    */
+  private def requireAccount(userId: UserId, store: EventStore): ZIO[Any, DomainError, Unit] =
+    store.findUser(userId).flatMap { name =>
+      if name.isDefined then ZIO.unit else ZIO.fail(AccountNotFound(userId.value.toString))
+    }
+
+  /** Безопасный парсинг userId: невалидное значение — `InvalidValue`. */
+  private def parseUserId(value: String): ZIO[Any, DomainError, UserId] =
+    ZIO.fromEither(UserId.from(value))
+
+  /** Безопасный парсинг taskId: невалидное значение — `InvalidValue`. */
+  private def parseTaskId(value: String): ZIO[Any, DomainError, TaskId] =
+    ZIO.fromEither(TaskId.from(value))
 
   /** Безопасный парсинг UUID: невалидное значение — `InvalidValue`. */
   private def parseUuid(value: String): ZIO[Any, DomainError, UUID] =

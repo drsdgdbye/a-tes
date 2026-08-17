@@ -149,6 +149,7 @@ lazy val accounting = project
       "org.postgresql"              % "postgresql"                     % postgresVersion,
       "com.thesamet.scalapb"       %% "scalapb-runtime"                % scalapb.compiler.Version.scalapbVersion,
       "io.github.jkobejs"          %% "zio-cron"                       % "1.0.1",
+      "com.cronutils"               % "cron-utils"                     % "9.1.6",
       "ch.qos.logback"              % "logback-classic"                % logbackVersion % Runtime,
       "dev.zio"                    %% "zio-test"                       % zioVersion % Test,
       "dev.zio"                    %% "zio-test-sbt"                   % zioVersion % Test

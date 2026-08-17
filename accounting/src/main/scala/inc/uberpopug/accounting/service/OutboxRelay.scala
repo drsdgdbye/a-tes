@@ -42,22 +42,27 @@ final case class OutboxRelayLive(
     ZIO.logInfo("OutboxRelay started") *> loop.forever
 
   /** Одна итерация: claim батча, публикация каждого события с пометкой published (ошибки отдельных записей логируются и
-    * не роняют цикл), затем пауза до следующего опроса.
+    * не роняют цикл), затем пауза до следующего опроса. Непубликуемый тип события (нет топика) помечается published:
+    * иначе одна битая запись занимала бы слот каждого батча навсегда (head-of-line) и спамила лог.
     */
   private val loop: ZIO[Any, Nothing, Unit] =
     (for
       records <- repo.claimBatch(cfg.outbox.batchSize)
       _ <- ZIO.foreachDiscard(records) { record =>
         val publish =
-          for
-            topic <- ZIO.fromOption(topicFor(record.eventType))
-            _ <- producer.produce(
-              ProducerRecord(topic, record.aggregateId.toString, record.payload),
-              Serde.string,
-              Serde.byteArray
-            )
-            _ <- repo.markPublished(List(record.id))
-          yield ()
+          topicFor(record.eventType) match
+            case Some(topic) =>
+              for
+                _ <- producer.produce(
+                  ProducerRecord(topic, record.aggregateId.toString, record.payload),
+                  Serde.string,
+                  Serde.byteArray
+                )
+                _ <- repo.markPublished(List(record.id))
+              yield ()
+            case None =>
+              ZIO.logError(s"Unknown outbox event type '${record.eventType}' for record ${record.id}: skipped") *>
+                repo.markPublished(List(record.id)).ignore
         publish.catchAll(error =>
           ZIO.logError(s"Failed to publish outbox record ${record.id} (${record.eventType}): ${describe(error)}")
         )

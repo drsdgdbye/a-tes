@@ -15,10 +15,11 @@
   `task.completed` (protobuf): наполняет event store, проекцию пользователей и
   балансы. Идемпотентность через `processed_events` (PK = id исходного
   Kafka-события, SQLState 23505).
-- Poison-pill → DLQ: невалидный protobuf, событие для несуществующего счёта,
-  нарушение бизнес-правила публикуются в `internal.dead-letter`
-  (`DeadLetterRecord`); транзиентные ошибки роняют поток — consumer
-  переподписывается заново.
+- Poison-pill → DLQ: невалидный protobuf / данные, нарушение бизнес-правила
+  публикуются в `accounting.dlq` (`DeadLetterRecord`); транзиентные ошибки
+  (включая событие для ещё не существующего счёта — при catch-up
+  `auth.user.created` приходит позже) роняют поток: consumer
+  переподписывается с exponential backoff и событие переобрабатывается.
 - Ежедневные выплаты: cron (QUARTZ, UTC) или фиксированный интервал; для
   каждого счёта `amount = max(0, balance)`, положительный баланс обнуляется,
   отрицательный (долг) сохраняется. `PaymentProcessed` пишется в outbox в той
@@ -113,7 +114,7 @@ sbt accounting/run
 | `ates.kafka.topicTaskAssigned` | `ATES_KAFKA_TOPIC_TASK_ASSIGNED` | `task.assigned` |
 | `ates.kafka.topicTaskCompleted` | `ATES_KAFKA_TOPIC_TASK_COMPLETED` | `task.completed` |
 | `ates.kafka.topicPaymentProcessed` | `ATES_KAFKA_TOPIC_PAYMENT_PROCESSED` | `accounting.payment.processed` |
-| `ates.kafka.topicDlq` | `ATES_KAFKA_TOPIC_DLQ` | `internal.dead-letter` |
+| `ates.kafka.topicDlq` | `ATES_KAFKA_TOPIC_DLQ` | `accounting.dlq` |
 | `ates.outbox.batchSize` | `ATES_OUTBOX_BATCH_SIZE` | `50` |
 | `ates.outbox.pollIntervalSeconds` | `ATES_OUTBOX_POLL_INTERVAL` | `2` |
 | `ates.payout.useUtc` | `ATES_PAYOUT_USE_UTC` | `true` |
@@ -153,7 +154,8 @@ sbt "accounting/Test/testFull"
 ```
 
 Покрытие (M-ACC-01..24 + property-based):
-- маппинг Kafka-событий в event store, идемпотентность, poison → AccountNotFound;
+- маппинг Kafka-событий в event store, идемпотентность, безопасный парсинг
+  примитивов, событие для несуществующего счёта → транзиентная ошибка;
 - баланс, отрицательный баланс, аудитлог (типы операций, сортировка, пагинация);
 - доход менеджмента и ежедневная статистика (включая 10+ событий в день);
 - выплаты: сумма, обнуление, долг, срез по времени, outbox, идемпотентность cron;

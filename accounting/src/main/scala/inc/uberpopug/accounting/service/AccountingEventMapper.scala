@@ -6,60 +6,74 @@ import java.util.UUID
 import inc.uberpopug.common.domain.{Money, TaskId, UserId}
 import inc.uberpopug.accounting.domain.AccountEvent
 
-import task.task_assigned.TaskAssigned
-import task.task_completed.TaskCompleted
-import task.task_created.TaskCreated
-
-/** Чистый маппинг Kafka-событий TaskService/Auth в доменные события event store. `timestamp` берётся из самого события
-  * (детерминированность срезов по дате), `eventId` — новый UUID события event store.
+/** Чистый маппинг типизированных данных Kafka-событий TaskService/Auth в доменные события event store. `timestamp`
+  * берётся из самого события (детерминированность срезов по дате), `eventId` — новый UUID события event store. Парсинг
+  * примитивов из protobuf выполняется в `AccountingEventProcessor` (безопасно, через typed error channel); сюда
+  * приходят уже валидные значения.
   */
 object AccountingEventMapper:
-  /** `TaskCreated` → `TaskPriceRecorded`: цены зафиксированы при создании задачи. */
-  def taskPriceRecorded(event: TaskCreated): AccountEvent =
+  /** Цены задачи → `TaskPriceRecorded`. */
+  def taskPriceRecorded(
+      timestamp: Instant,
+      taskId: TaskId,
+      userId: UserId,
+      assignFee: Money,
+      completeReward: Money
+  ): AccountEvent =
     AccountEvent.TaskPriceRecorded(
       eventId = UUID.randomUUID(),
-      timestamp = Instant.ofEpochMilli(event.timestamp),
-      taskId = TaskId(UUID.fromString(event.taskId)),
-      userId = UserId(UUID.fromString(event.assigneeId)),
-      assignFee = Money.fromCents(event.assignFeeCents),
-      completeReward = Money.fromCents(event.completeRewardCents)
+      timestamp = timestamp,
+      taskId = taskId,
+      userId = userId,
+      assignFee = assignFee,
+      completeReward = completeReward
     )
 
-  /** `TaskAssigned` → события списания (и возврата, если был старый исполнитель). Порядок: сначала возврат старому
-    * исполнителю, затем списание с нового.
+  /** События списания и возврата (если был старый исполнитель). Порядок: сначала возврат старому, затем списание с
+    * нового.
     */
-  def assignedEvents(event: TaskAssigned): List[AccountEvent] =
-    val timestamp = Instant.ofEpochMilli(event.timestamp)
-    val taskId = TaskId(UUID.fromString(event.taskId))
+  def assignedEvents(
+      timestamp: Instant,
+      taskId: TaskId,
+      newAssignee: UserId,
+      oldAssignee: Option[UserId],
+      assignFee: Money
+  ): List[AccountEvent] =
     val refund =
-      if event.oldAssigneeId.nonEmpty then
-        List(
-          AccountEvent.AccountCredited(
-            eventId = UUID.randomUUID(),
-            timestamp = timestamp,
-            userId = UserId(UUID.fromString(event.oldAssigneeId)),
-            amount = Money.fromCents(event.assignFeeCents),
-            taskId = taskId,
-            reason = AccountEvent.CreditReason.AssignmentRefund
+      oldAssignee match
+        case Some(assignee) =>
+          List(
+            AccountEvent.AccountCredited(
+              eventId = UUID.randomUUID(),
+              timestamp = timestamp,
+              userId = assignee,
+              amount = assignFee,
+              taskId = taskId,
+              reason = AccountEvent.CreditReason.AssignmentRefund
+            )
           )
-        )
-      else Nil
+        case None => Nil
     refund :+ AccountEvent.AccountDebited(
       eventId = UUID.randomUUID(),
       timestamp = timestamp,
-      userId = UserId(UUID.fromString(event.newAssigneeId)),
-      amount = Money.fromCents(event.assignFeeCents),
+      userId = newAssignee,
+      amount = assignFee,
       taskId = taskId,
       reason = AccountEvent.DebitReason.TaskAssigned
     )
 
-  /** `TaskCompleted` → `AccountCredited` с CompleteReward исполнителю. */
-  def completedReward(event: TaskCompleted): AccountEvent =
+  /** CompleteReward → `AccountCredited` исполнителю. */
+  def completedReward(
+      timestamp: Instant,
+      taskId: TaskId,
+      userId: UserId,
+      completeReward: Money
+  ): AccountEvent =
     AccountEvent.AccountCredited(
       eventId = UUID.randomUUID(),
-      timestamp = Instant.ofEpochMilli(event.timestamp),
-      userId = UserId(UUID.fromString(event.assigneeId)),
-      amount = Money.fromCents(event.completeRewardCents),
-      taskId = TaskId(UUID.fromString(event.taskId)),
+      timestamp = timestamp,
+      userId = userId,
+      amount = completeReward,
+      taskId = taskId,
       reason = AccountEvent.CreditReason.TaskCompleted
     )

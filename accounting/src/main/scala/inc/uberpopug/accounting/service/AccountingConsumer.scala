@@ -11,7 +11,7 @@ import zio.stream.ZStream
 import inc.uberpopug.accounting.config.KafkaConfig
 import inc.uberpopug.accounting.repository.EventStore
 import inc.uberpopug.common.domain.DomainError
-import inc.uberpopug.common.domain.DomainError.{AccountNotFound, BusinessRuleViolation, InvalidValue}
+import inc.uberpopug.common.domain.DomainError.{BusinessRuleViolation, InvalidValue}
 
 import auth.user_created.UserCreated
 import internal.dead_letter_record.DeadLetterRecord
@@ -19,8 +19,9 @@ import task.task_assigned.TaskAssigned
 import task.task_completed.TaskCompleted
 import task.task_created.TaskCreated
 
-/** Потребитель событий TaskService/Auth: наполняет event store, проекцию пользователей и балансы. Poison pill (событие
-  * для несуществующего счёта, невалидный protobuf) → DLQ; транзиентные ошибки роняют поток → переподписка.
+/** Потребитель событий TaskService/Auth: наполняет event store, проекцию пользователей и балансы. Poison pill
+  * (невалидный protobuf/данные, нарушение бизнес-правила) → DLQ; транзиентные ошибки (включая событие для ещё не
+  * существующего счёта) роняют поток → переподписка с retry.
   */
 trait AccountingConsumer:
   /** Бесконечный поток обработки событий (никогда не завершается). */
@@ -54,7 +55,10 @@ final case class AccountingConsumerLive(
     clock: Clock
 ) extends AccountingConsumer:
 
-  /** Бесконечный цикл: при фатальной ошибке потока логирует её и переподписывается заново. */
+  /** Бесконечный цикл: при фатальной ошибке потока логирует её и переподписывается заново. Перед каждой переподпиской —
+    * bounded retry с экспоненциальным backoff (не даёт busy-loop и даёт `auth.user.created` время догнать при
+    * catch-up).
+    */
   def run: ZIO[Any, Nothing, Unit] =
     ZIO.logInfo("AccountingConsumer started") *>
       stream
@@ -62,10 +66,16 @@ final case class AccountingConsumerLive(
           handle(committable).foldZIO(
             error =>
               if isPoison(error) then
-                produceDlq(committable, error).ignore *>
-                  ZIO.logError(
-                    s"Poison record ${committable.record.topic()}/${committable.record.key()} -> DLQ: ${describe(error)}"
-                  ) *> ZIO.succeed(committable.offset)
+                produceDlq(committable, error).foldZIO(
+                  dlqError =>
+                    ZIO.logError(
+                      s"Failed to publish ${committable.record.topic()}/${committable.record.key()} to DLQ: ${describe(dlqError)}"
+                    ) *> ZIO.fail(ProcessingFailure(error)),
+                  _ =>
+                    ZIO.logError(
+                      s"Poison record ${committable.record.topic()}/${committable.record.key()} -> DLQ: ${describe(error)}"
+                    ) *> ZIO.succeed(committable.offset)
+                )
               else
                 ZIO.logError(
                   s"Transient failure for ${committable.record.topic()}/${committable.record.key()}: ${describe(error)}"
@@ -77,7 +87,8 @@ final case class AccountingConsumerLive(
         .aggregateAsyncWithin(Consumer.collectOffsets, Schedule.fixed(100.millis))
         .mapZIO(_.commit)
         .runDrain
-        .catchAll(error => ZIO.logError(s"AccountingConsumer stream failed: ${describe(error)}"))
+        .retry(Schedule.exponential(100.millis) && Schedule.recurs(4))
+        .catchAll(error => ZIO.logError(s"AccountingConsumer stream failed after retries: ${describe(error)}"))
         .forever
 
   /** Поток записей четырёх топиков (ключ — string, значение — protobuf-байты). */
@@ -126,11 +137,13 @@ final case class AccountingConsumerLive(
       _ <- producer.produce(ProducerRecord(cfg.topicDlq, null, record.toByteArray), Serde.string, Serde.byteArray)
     yield ()
 
-  /** Ошибки данных, которые не исправить ретраем: только они уходят в DLQ. */
+  /** Ошибки данных, которые не исправить ретраем: только они уходят в DLQ. `AccountNotFound` сюда НЕ входит: при
+    * восстановлении `auth.user.created` приходит позже (catch-up), поэтому событие транзиентно и переобрабатывается.
+    */
   private def isPoison(error: DomainError): Boolean =
     error match
-      case InvalidValue(_, _) | AccountNotFound(_) | BusinessRuleViolation(_) => true
-      case _                                                                  => false
+      case InvalidValue(_, _) | BusinessRuleViolation(_) => true
+      case _                                             => false
 
   /** Человекочитаемое описание ошибки для логов. */
   private def describe(error: Any): String =
