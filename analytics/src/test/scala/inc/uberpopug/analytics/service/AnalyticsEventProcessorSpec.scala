@@ -71,7 +71,7 @@ object AnalyticsEventProcessorSpec extends ZIOSpecDefault:
       name: String,
       amount: Long,
       date: LocalDate,
-      ts: Long = 4000L,
+      ts: Long,
       eventId: UUID = UUID.randomUUID()
   ): PaymentProcessed =
     PaymentProcessed(eventId.toString, ts, 1, popugId.toString, name, amount, date.toString)
@@ -132,15 +132,19 @@ object AnalyticsEventProcessorSpec extends ZIOSpecDefault:
           for
             (processor, store, state) <- makeState
             popug = UUID.randomUUID()
+            taskId = UUID.randomUUID()
             _ <- registerUser(processor, store, popug)
+            _ <- processor.processTaskAssigned(taskAssigned(taskId, popug, None, fee = 1500L, ts = 2000L), store).orDieE
+            _ <- processor.processTaskCompleted(taskCompleted(taskId, popug, reward = 4000L, ts = 3000L), store).orDieE
             date = LocalDate.of(2026, 1, 15)
             _ <- processor
-              .processPaymentProcessed(paymentProcessed(popug, "popug-1", amount = 0L, date = date), store)
+              .processPaymentProcessed(paymentProcessed(popug, "popug-1", amount = 4000L, date = date, ts = 4000L), store)
               .orDieE
             popugs <- state.get.map(_.popugs)
             stats <- state.get.map(_.dailyStats)
-          yield assertTrue(popugs(popug).balanceCents == 0L) &&
-            assertTrue(stats(date).popugsNegative == 0)
+          yield assertTrue(popugs(popug).balanceCents == -1500L) &&
+            assertTrue(popugs(popug).name == "popug-1") &&
+            assertTrue(stats(date).popugsNegative == 1)
         },
         test("M-ANL-05 duplicate event_id is ignored (idempotent)") {
           for

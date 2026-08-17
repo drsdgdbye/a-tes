@@ -107,9 +107,10 @@ final case class InMemoryAnalyticsStore(state: Ref[InMemoryAnalyticsState]) exte
     state.modify { s =>
       if s.processed.contains(eventId) then (false, s)
       else
-        val afterPayout = adjustBalance(s.popugs, popugId.value, -amountCents, at).updated(
+        val afterAdjust = adjustBalance(s.popugs, popugId.value, -amountCents, at)
+        val afterPayout = afterAdjust.updated(
           popugId.value,
-          s.popugs(popugId.value).copy(name = popugName, updatedAt = at)
+          afterAdjust(popugId.value).copy(name = popugName, updatedAt = at)
         )
         val negative = afterPayout.values.count(_.balanceCents < 0)
         val stats = setNegative(s, date, negative, at)
