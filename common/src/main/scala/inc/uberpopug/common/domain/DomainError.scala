@@ -23,3 +23,6 @@ enum DomainError:
 
   /** Accounting Service. */
   case AccountNotFound(userId: String)
+
+  /** Notification Service. */
+  case TelegramSendFailed(message: String)

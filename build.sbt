@@ -1,5 +1,5 @@
 ThisBuild / organization := "inc.uberpopug"
-ThisBuild / version      := "0.2.0"
+ThisBuild / version      := "0.7.0"
 ThisBuild / scalaVersion := "3.8.4"
 
 val zioVersion       = "2.1.26"
@@ -207,8 +207,42 @@ lazy val analytics = project
 
 lazy val notification = project
   .in(file("notification"))
-  .settings(name := "a-tes-notification")
+  .settings(
+    name := "a-tes-notification",
+    libraryDependencies ++= Seq(
+      "dev.zio"                    %% "zio"                            % zioVersion,
+      "dev.zio"                    %% "zio-streams"                    % zioVersion,
+      "dev.zio"                    %% "zio-json"                       % zioJsonVersion,
+      "dev.zio"                    %% "zio-config"                     % zioConfigVersion,
+      "dev.zio"                    %% "zio-config-magnolia"            % zioConfigVersion,
+      "dev.zio"                    %% "zio-config-typesafe"            % zioConfigVersion,
+      "dev.zio"                    %% "zio-logging"                    % zioLoggingVersion,
+      "dev.zio"                    %% "zio-logging-slf4j2-bridge"      % zioLoggingVersion,
+      "dev.zio"                    %% "zio-kafka"                      % zioKafkaVersion,
+      "dev.zio"                    %% "zio-metrics-connectors"         % zioMetricsVersion,
+      "dev.zio"                    %% "zio-metrics-connectors-prometheus" % zioMetricsVersion,
+      "dev.zio"                    %% "zio-http"                       % zioHttpVersion,
+      "nl.vroste"                  %% "rezilience"                     % rezilienceVersion,
+      "io.getquill"                %% "quill-jdbc-zio"                 % quillVersion,
+      "org.flywaydb"                % "flyway-core"                    % flywayVersion,
+      "org.flywaydb"                % "flyway-database-postgresql"     % flywayVersion,
+      "com.zaxxer"                  % "HikariCP"                       % hikariVersion,
+      "org.postgresql"              % "postgresql"                     % postgresVersion,
+      "com.thesamet.scalapb"       %% "scalapb-runtime"                % scalapb.compiler.Version.scalapbVersion,
+      "ch.qos.logback"              % "logback-classic"                % logbackVersion % Runtime,
+      "dev.zio"                    %% "zio-test"                       % zioVersion % Test,
+      "dev.zio"                    %% "zio-test-sbt"                   % zioVersion % Test
+    ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+    Compile / mainClass := Some("inc.uberpopug.notification.Main"),
+    Docker / packageName := "ates-notification",
+    dockerBaseImage := "eclipse-temurin:21-jre",
+    dockerExposedPorts := Seq(10006),
+    dockerUpdateLatest := true,
+    Universal / javaOptions ++= Seq("-Duser.timezone=UTC")
+  )
   .dependsOn(common)
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
 
 lazy val gateway = project
   .in(file("gateway"))

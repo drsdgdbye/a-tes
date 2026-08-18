@@ -138,7 +138,10 @@ object AnalyticsEventProcessorSpec extends ZIOSpecDefault:
             _ <- processor.processTaskCompleted(taskCompleted(taskId, popug, reward = 4000L, ts = 3000L), store).orDieE
             date = LocalDate.of(2026, 1, 15)
             _ <- processor
-              .processPaymentProcessed(paymentProcessed(popug, "popug-1", amount = 4000L, date = date, ts = 4000L), store)
+              .processPaymentProcessed(
+                paymentProcessed(popug, "popug-1", amount = 4000L, date = date, ts = 4000L),
+                store
+              )
               .orDieE
             popugs <- state.get.map(_.popugs)
             stats <- state.get.map(_.dailyStats)

@@ -33,4 +33,6 @@ object ErrorMapping:
         (StatusCode.Conflict, ErrorResponse("BUSINESS_RULE_VIOLATION", message))
       case OptimisticLockConflict(message) =>
         (StatusCode.Conflict, ErrorResponse("CONFLICT", message))
-      case PersistenceError(message) => (StatusCode.InternalServerError, ErrorResponse("INTERNAL_ERROR", message))
+      case PersistenceError(message)   => (StatusCode.InternalServerError, ErrorResponse("INTERNAL_ERROR", message))
+      case TelegramSendFailed(message) =>
+        (StatusCode.InternalServerError, ErrorResponse("INTERNAL_ERROR", message))
