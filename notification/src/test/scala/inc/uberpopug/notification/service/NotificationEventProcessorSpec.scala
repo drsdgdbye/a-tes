@@ -8,7 +8,7 @@ import zio.test.*
 import zio.test.Assertion.*
 
 import inc.uberpopug.common.domain.DomainError
-import inc.uberpopug.common.domain.DomainError.TelegramSendFailed
+import inc.uberpopug.common.domain.DomainError.{PersistenceError, TelegramSendFailed}
 import inc.uberpopug.common.domain.UserId
 import inc.uberpopug.notification.{InMemoryNotificationState, InMemoryNotificationStore, orDieE}
 import inc.uberpopug.notification.domain.{ChannelType, NotificationEvent, NotificationTextBuilder, RenderedMessage}
@@ -34,6 +34,15 @@ object NotificationEventProcessorSpec extends ZIOSpecDefault:
     val channelType: ChannelType = ChannelType.Telegram
     def send(message: RenderedMessage): ZIO[Any, DomainError, Unit] =
       ZIO.fail(TelegramSendFailed("telegram down"))
+
+  /** Канал, который первый вызов проваливает транзиентной ошибкой (не poison), дальше работает — моделирует DB blip. */
+  final case class TransientChannel(attempts: Ref[Int], sent: Ref[List[RenderedMessage]]) extends NotificationChannel:
+    val channelType: ChannelType = ChannelType.Telegram
+    def send(message: RenderedMessage): ZIO[Any, DomainError, Unit] =
+      attempts.update(_ + 1) *> attempts.get.flatMap {
+        case 1 => ZIO.fail(PersistenceError("db blip"))
+        case _ => sent.update(_ :+ message)
+      }
 
   private def makeStandard(
       adminAddresses: List[String] = Nil,
@@ -165,6 +174,58 @@ object NotificationEventProcessorSpec extends ZIOSpecDefault:
             (processor, _, _, _) <- makeStandardWithChannel(adminAddresses = Nil, channel = FailingChannel())
             result <- processor.process(UUID.randomUUID(), "TaskAssigned", assigned).either
           yield assert(result)(isLeft(isSubtype[TelegramSendFailed](anything)))
+        }
+      ),
+      suite("processed ordering / recovery")(
+        test("транзиентная ошибка доставки -> processed не записан, повторная обработка доставляет") {
+          for
+            attempts <- Ref.make(0)
+            sent <- Ref.make(List.empty[RenderedMessage])
+            state <- Ref.make(InMemoryNotificationState())
+            store = InMemoryNotificationStore(state)
+            _ <- state.update(_.copy(contacts = Map((popug.value, "telegram") -> popugAddress)))
+            clock <- ZIO.clock
+            processor = NotificationEventProcessorLive(
+              store,
+              ChannelRegistry(Map(ChannelType.Telegram -> ChannelEntry(TransientChannel(attempts, sent), Nil))),
+              clock
+            )
+            eventId = UUID.randomUUID()
+            first <- processor.process(eventId, "TaskAssigned", assigned).either
+            processedAfterFail <- state.get.map(_.processed)
+            _ <- processor.process(eventId, "TaskAssigned", assigned).orDieE
+            messages <- sent.get
+            processedAfterSuccess <- state.get.map(_.processed)
+          yield assert(first)(isLeft(isSubtype[PersistenceError](anything))) &&
+            assertTrue(!processedAfterFail.contains(eventId)) &&
+            assertTrue(messages.length == 1) &&
+            assertTrue(processedAfterSuccess.contains(eventId))
+        },
+        test("неудачная отправка удаляет sent-маркер -> повторный process с рабочим каналом доставляет (DLQ-replay)") {
+          for
+            state <- Ref.make(InMemoryNotificationState())
+            store = InMemoryNotificationStore(state)
+            _ <- state.update(_.copy(contacts = Map((popug.value, "telegram") -> popugAddress)))
+            clock <- ZIO.clock
+            failing = NotificationEventProcessorLive(
+              store,
+              ChannelRegistry(Map(ChannelType.Telegram -> ChannelEntry(FailingChannel(), Nil))),
+              clock
+            )
+            eventId = UUID.randomUUID()
+            first <- failing.process(eventId, "TaskAssigned", assigned).either
+            markersAfterFail <- state.get.map(_.sent)
+            sent <- Ref.make(List.empty[RenderedMessage])
+            replay = NotificationEventProcessorLive(
+              store,
+              ChannelRegistry(Map(ChannelType.Telegram -> ChannelEntry(RecordingChannel(sent), Nil))),
+              clock
+            )
+            _ <- replay.process(eventId, "TaskAssigned", assigned).orDieE
+            messages <- sent.get
+          yield assert(first)(isLeft(isSubtype[TelegramSendFailed](anything))) &&
+            assertTrue(!markersAfterFail.contains((eventId, "telegram", popugAddress))) &&
+            assertTrue(messages.length == 1)
         }
       )
     )

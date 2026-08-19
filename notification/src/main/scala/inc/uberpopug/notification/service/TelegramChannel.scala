@@ -30,14 +30,19 @@ object TelegramApiResponse:
 trait RawTelegramClient:
   def send(chatId: String, text: String): ZIO[Any, DomainError, Unit]
 
-/** HTTP-реализация через `java.net.http.HttpClient` (JDK 21, без дополнительных зависимостей). */
-final case class HttpTelegramClient(http: HttpClient, botToken: String) extends RawTelegramClient:
+/** HTTP-реализация через `java.net.http.HttpClient` (JDK 21, без дополнительных зависимостей). `requestTimeout` —
+  * таймаут на запрос (как в `HttpRequest.Builder.timeout`): блокирующий вызов завершается в пределах бюджета
+  * TimeLimiter, не занимая поток пула после прерывания.
+  */
+final case class HttpTelegramClient(http: HttpClient, botToken: String, requestTimeout: java.time.Duration)
+    extends RawTelegramClient:
   def send(chatId: String, text: String): ZIO[Any, DomainError, Unit] =
     ZIO
       .attemptBlocking {
         val body = TelegramSendRequest(chatId, text).toJson.getBytes(StandardCharsets.UTF_8)
         val request = HttpRequest
           .newBuilder(URI.create(s"https://api.telegram.org/bot$botToken/sendMessage"))
+          .timeout(requestTimeout)
           .header("Content-Type", "application/json")
           .POST(HttpRequest.BodyPublishers.ofByteArray(body))
           .build()
@@ -86,7 +91,13 @@ object TelegramChannel:
   /** Собирает канал: сырой клиент + resilience-политики из конфига канала. */
   def make(config: TelegramChannelConfig): ZIO[Scope, Nothing, NotificationChannel] =
     for
-      raw <- ZIO.succeed(HttpTelegramClient(HttpClient.newHttpClient(), config.botToken))
+      raw <- ZIO.succeed(
+        HttpTelegramClient(
+          HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(config.sendTimeoutSeconds)).build(),
+          config.botToken,
+          java.time.Duration.ofSeconds(config.sendTimeoutSeconds)
+        )
+      )
       circuitBreaker <- CircuitBreaker.withMaxFailures[DomainError](
         maxFailures = 5,
         resetPolicy = Schedule.fixed(Duration.fromSeconds(60)),
@@ -106,6 +117,6 @@ object TelegramChannel:
         min = minDelay,
         max = maxDelay,
         factor = 2.0,
-        maxRetries = Some(attempts - 1)
+        maxRetries = Some(math.max(0, attempts - 1))
       )
     }

@@ -25,8 +25,13 @@ object NotificationEventProcessor:
   val layer: ZLayer[NotificationStore & ChannelRegistry & Clock, Nothing, NotificationEventProcessor] =
     ZLayer.fromFunction(NotificationEventProcessorLive(_, _, _))
 
-/** Реализация пайплайна: ① dedup через `processed_events` → ② staleness (старше 5 минут — не слать никому) → ③ по
-  * каждому каналу: адрес попуга есть → отправка; нет → админские адреса канала; админских нет → лог.
+/** Реализация пайплайна: ① dedup через `processed_events` (read-check в начале, запись — в конце) → ② staleness (старше
+  * 5 минут — не слать никому) → ③ по каждому каналу: адрес попуга есть → отправка; нет → админские адреса канала;
+  * админских нет → лог.
+  *
+  * `processed_events` пишется только после успешной доставки (или при staleness — событие никогда не станет свежим):
+  * транзиентная ошибка не теряет событие — поток переподписывается, событие перечитывается и доставляется заново.
+  * Маркер `sent_notifications` при неудачной отправке удаляется, чтобы DLQ-replay повторял доставку.
   */
 final case class NotificationEventProcessorLive(
     store: NotificationStore,
@@ -37,14 +42,18 @@ final case class NotificationEventProcessorLive(
   def process(eventId: UUID, eventType: String, event: NotificationEvent): ZIO[Any, DomainError, Unit] =
     for
       now <- clock.instant
-      fresh <- store.insertProcessedIfAbsent(eventId, eventType, now)
+      alreadyProcessed <- store.isProcessed(eventId)
       _ <-
-        if !fresh then ZIO.logInfo(s"Skip duplicate event $eventId ($eventType)")
+        if alreadyProcessed then ZIO.logInfo(s"Skip duplicate event $eventId ($eventType)")
         else if StalenessPolicy.isStale(event.timestamp, now) then
-          ZIO.logInfo(
+          store.insertProcessedIfAbsent(eventId, eventType, now) *> ZIO.logInfo(
             s"Skip stale event $eventId ($eventType): event is older than ${StalenessPolicy.maxEventAge}"
           )
-        else notifyChannels(eventId, eventType, event, now)
+        else
+          notifyChannels(eventId, eventType, event, now) *>
+            store.insertProcessedIfAbsent(eventId, eventType, now) *> ZIO.logDebug(
+              s"Event $eventId ($eventType) delivered, marked processed"
+            )
     yield ()
 
   /** Доставка по каждому каналу реестра: попугу или админским адресам при отсутствии маппинга. */
@@ -74,7 +83,9 @@ final case class NotificationEventProcessorLive(
       yield ()
     }
 
-  /** Записывает намерение отправить (INSERT до отправки, спека §7.4) и отправляет; дубликат (23505) → пропуск. */
+  /** Записывает намерение отправить (INSERT до отправки, спека §7.4) и отправляет; дубликат (23505) → пропуск. При
+    * неудачной отправке маркер удаляется — retry/DLQ-replay смогут повторить доставку.
+    */
   private def deliver(
       eventId: UUID,
       eventType: String,
@@ -88,7 +99,13 @@ final case class NotificationEventProcessorLive(
       recorded <- store.insertSentBeforeSend(eventId, event.popugId, eventType, channel.channelType, address, now)
       _ <-
         if !recorded then ZIO.logInfo(s"Notification for $eventId already sent via ${channel.channelType.wire}")
-        else channel.send(RenderedMessage(channel.channelType, address, text))
+        else
+          channel
+            .send(RenderedMessage(channel.channelType, address, text))
+            .foldZIO(
+              error => store.deleteSentBeforeRetry(eventId, channel.channelType, address) *> ZIO.fail(error),
+              _ => ZIO.unit
+            )
     yield ()
 
   /** Сообщение админам о невозможности доставки попугу. */

@@ -26,6 +26,9 @@ final case class InMemoryNotificationState(
   * `(eventId, channel, address)`, отсутствие маппинга — `None`.
   */
 final case class InMemoryNotificationStore(state: Ref[InMemoryNotificationState]) extends NotificationStore:
+  def isProcessed(eventId: UUID): ZIO[Any, DomainError, Boolean] =
+    state.get.map(_.processed.contains(eventId))
+
   def insertProcessedIfAbsent(eventId: UUID, eventType: String, at: Instant): ZIO[Any, DomainError, Boolean] =
     state.modify { s =>
       if s.processed.contains(eventId) then (false, s)
@@ -48,3 +51,6 @@ final case class InMemoryNotificationStore(state: Ref[InMemoryNotificationState]
       if s.sent.contains(key) then (false, s)
       else (true, s.copy(sent = s.sent + key))
     }
+
+  def deleteSentBeforeRetry(eventId: UUID, channel: ChannelType, address: String): ZIO[Any, DomainError, Unit] =
+    state.update(s => s.copy(sent = s.sent - ((eventId, channel.wire, address))))

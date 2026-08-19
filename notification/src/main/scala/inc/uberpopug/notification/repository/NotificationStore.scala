@@ -33,6 +33,9 @@ final case class ProcessedEventRow(eventId: UUID, eventType: String, processedAt
 
 /** Хранилище Notification Service: контакты попугов, журнал отправок и идемпотентность. */
 trait NotificationStore:
+  /** Признак, что событие уже обработано до конца (прочитано из `processed_events`). */
+  def isProcessed(eventId: UUID): ZIO[Any, DomainError, Boolean]
+
   /** Вставляет id события в `processed_events`; дубликат (SQLState 23505) — `false`. */
   def insertProcessedIfAbsent(eventId: UUID, eventType: String, at: Instant): ZIO[Any, DomainError, Boolean]
 
@@ -50,6 +53,13 @@ trait NotificationStore:
       address: String,
       at: Instant
   ): ZIO[Any, DomainError, Boolean]
+
+  /** Удаляет маркер `sent_notifications` после неудачной отправки, чтобы retry/DLQ-replay мог повторить доставку. */
+  def deleteSentBeforeRetry(
+      eventId: UUID,
+      channel: ChannelType,
+      address: String
+  ): ZIO[Any, DomainError, Unit]
 
 object NotificationStore:
   /** Слой репозитория поверх Quill-контекста Postgres. */
@@ -76,6 +86,10 @@ final case class NotificationStoreLive(ctx: Postgres) extends NotificationStore:
     ex match
       case e: SQLException => PersistenceError(Option(e.getMessage).getOrElse(e.getClass.getSimpleName))
       case other           => PersistenceError(Option(other.getMessage).getOrElse(other.getClass.getSimpleName))
+
+  def isProcessed(eventId: UUID): ZIO[Any, DomainError, Boolean] =
+    run(query[ProcessedEventRow].filter(_.eventId == lift(eventId)).nonEmpty)
+      .mapError(toPersistenceError)
 
   def insertProcessedIfAbsent(eventId: UUID, eventType: String, at: Instant): ZIO[Any, DomainError, Boolean] =
     run(query[ProcessedEventRow].insertValue(lift(ProcessedEventRow(eventId, eventType, at))))
@@ -106,4 +120,16 @@ final case class NotificationStoreLive(ctx: Postgres) extends NotificationStore:
     )
       .as(true)
       .catchSome { case e: SQLException if e.getSQLState == "23505" => ZIO.succeed(false) }
+      .mapError(toPersistenceError)
+
+  def deleteSentBeforeRetry(
+      eventId: UUID,
+      channel: ChannelType,
+      address: String
+  ): ZIO[Any, DomainError, Unit] =
+    run(
+      query[SentNotificationRow]
+        .filter(r => r.eventId == lift(eventId) && r.channel == lift(channel.wire) && r.address == lift(address))
+        .delete
+    ).unit
       .mapError(toPersistenceError)
