@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>aTES — Аккаунтинг</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  <div class="container">
+    <div id="message" class="alert"></div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h2>Мой баланс</h2>
+        <div>
+          <span class="muted">Текущий баланс</span><br>
+          <span id="balance-value" class="stat">—</span>
+        </div>
+      </div>
+
+      <div class="card" id="mgmt-earnings-card" style="display:none">
+        <h2>Доход менеджмента</h2>
+        <form id="mgmt-earnings-form" class="form-actions">
+          <input type="date" id="mgmt-earnings-date" required>
+          <button type="submit" class="btn-small btn">Показать</button>
+        </form>
+        <div>
+          <span class="muted">Доход за выбранный день</span><br>
+          <span id="mgmt-earnings-value" class="stat">—</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Аудитлог</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Время</th>
+            <th>Тип</th>
+            <th>Сумма</th>
+            <th>Описание</th>
+          </tr>
+        </thead>
+        <tbody id="audit-body"></tbody>
+      </table>
+      <div id="audit-empty" class="empty" style="display:none">Операций пока нет</div>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/common.js"></script>
+  <script src="js/accounting.js"></script>
+</body>
+</html>

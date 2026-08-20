@@ -1,5 +1,5 @@
 ThisBuild / organization := "inc.uberpopug"
-ThisBuild / version      := "0.7.0"
+ThisBuild / version      := "0.8.0"
 ThisBuild / scalaVersion := "3.8.4"
 
 val zioVersion       = "2.1.26"

@@ -45,6 +45,7 @@ object RefreshTokenRepository:
 /** Quill-реализация репозитория refresh-токенов поверх Postgres. */
 final case class RefreshTokenRepositoryLive(ctx: Postgres) extends RefreshTokenRepository:
   import ctx.*
+  import Tables.given
 
   /** Оборачивает SQL-ошибку в `PersistenceError`. */
   private def toPersistenceError(ex: Throwable): DomainError =

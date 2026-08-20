@@ -33,6 +33,11 @@ object OutboxRow:
   def fromRecord(record: OutboxRecord): OutboxRow =
     OutboxRow(0L, record.aggregateId, record.eventType, record.payload, record.createdAt, published = false)
 
+  /** Исключает `id` из INSERT: значение генерирует `BIGSERIAL` (иначе `id = 0` на второй записи ломается
+    * `duplicate key` 23505).
+    */
+  inline given InsertMeta[OutboxRow] = insertMeta[OutboxRow](_.id)
+
 /** Репозиторий transactional outbox: буфер событий для Kafka-публикации. */
 trait OutboxRepository:
   /** Добавляет событие в outbox. */
@@ -52,6 +57,7 @@ object OutboxRepository:
 /** Quill-реализация репозитория outbox поверх Postgres. */
 final case class OutboxRepositoryLive(ctx: Postgres) extends OutboxRepository:
   import ctx.*
+  import Tables.given
 
   /** Оборачивает SQL-ошибку в `PersistenceError`. */
   private def toPersistenceError(ex: Throwable): DomainError =

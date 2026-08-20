@@ -93,6 +93,7 @@ object EventStore:
 /** Quill-реализация event store поверх Postgres. */
 final case class EventStoreLive(ctx: Postgres) extends EventStore:
   import ctx.*
+  import Tables.given
 
   /** Типы финансовых событий, попадающих в аудитлог. */
   private val financialEventTypes = List("AccountDebited", "AccountCredited", "AccountPayout")

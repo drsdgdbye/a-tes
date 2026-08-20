@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>aTES — Таск-трекер</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  <div class="container">
+    <div id="message" class="alert"></div>
+
+    <div class="card">
+      <h2>Создать задачу</h2>
+      <form id="create-task-form">
+        <label for="task-title">Название</label>
+        <input type="text" id="task-title" maxlength="500" required>
+        <label for="task-description">Описание</label>
+        <input type="text" id="task-description">
+        <div class="form-actions">
+          <button type="submit" class="btn">Создать</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="actions">
+      <button type="button" id="btn-shuffle" class="btn-secondary" style="display:none">
+        Заассайнить все
+      </button>
+    </div>
+
+    <div class="card">
+      <h2>Мои задачи</h2>
+      <table id="tasks-table">
+        <thead>
+          <tr>
+            <th>Название</th>
+            <th>Статус</th>
+            <th>За выполнение</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tasks-body"></tbody>
+      </table>
+      <div id="tasks-empty" class="empty" style="display:none">Задач пока нет</div>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/common.js"></script>
+  <script src="js/tasks.js"></script>
+</body>
+</html>

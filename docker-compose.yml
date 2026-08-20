@@ -16,6 +16,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.10
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.7.0
@@ -25,6 +28,9 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
     ports:
       - "2181:2181"
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.11
 
   kafka:
     image: confluentinc/cp-kafka:7.7.0
@@ -41,6 +47,15 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:29092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.12
 
   schema-registry:
     image: confluentinc/cp-schema-registry:7.7.0
@@ -53,6 +68,9 @@ services:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.13
 
   jaeger:
     image: jaegertracing/all-in-one:1.60
@@ -63,6 +81,9 @@ services:
       - "4318:4318"
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.14
 
   prometheus:
     image: prom/prometheus:v2.53.0
@@ -75,6 +96,9 @@ services:
       - "9090:9090"
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.15
 
   grafana:
     image: grafana/grafana:11.2.0
@@ -87,6 +111,9 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - grafana-data:/var/lib/grafana
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.16
 
   auth:
     image: ates-auth:latest
@@ -95,7 +122,7 @@ services:
       postgres:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "10001:10001"
     environment:
@@ -104,6 +131,9 @@ services:
       ATES_DB_USER: ates
       ATES_DB_PASSWORD: ates
       ATES_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.17
 
   gateway:
     image: ates-gateway:latest
@@ -122,6 +152,9 @@ services:
       ATES_SERVICES_TASK_SERVICE_BASE_URL: http://task-service:10003
       ATES_SERVICES_ACCOUNTING_BASE_URL: http://accounting:10004
       ATES_SERVICES_ANALYTICS_BASE_URL: http://analytics:10005
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.18
 
   task-service:
     image: ates-task-service:latest
@@ -130,7 +163,7 @@ services:
       postgres:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "10003:10003"
     environment:
@@ -139,6 +172,9 @@ services:
       ATES_DB_USER: ates
       ATES_DB_PASSWORD: ates
       ATES_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.19
 
   accounting:
     image: ates-accounting:latest
@@ -147,7 +183,7 @@ services:
       postgres:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "10004:10004"
     environment:
@@ -156,6 +192,9 @@ services:
       ATES_DB_USER: ates
       ATES_DB_PASSWORD: ates
       ATES_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.20
 
   analytics:
     image: ates-analytics:latest
@@ -164,7 +203,7 @@ services:
       postgres:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "10005:10005"
     environment:
@@ -173,6 +212,9 @@ services:
       ATES_DB_USER: ates
       ATES_DB_PASSWORD: ates
       ATES_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.21
 
   notification:
     image: ates-notification:latest
@@ -181,7 +223,7 @@ services:
       postgres:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "10006:10006"
     environment:
@@ -192,7 +234,30 @@ services:
       ATES_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       ATES_CHANNELS_TELEGRAM_BOT_TOKEN: ${ATES_CHANNELS_TELEGRAM_BOT_TOKEN:-}
       ATES_CHANNELS_TELEGRAM_ADMIN_ADDRESSES: ${ATES_CHANNELS_TELEGRAM_ADMIN_ADDRESSES:-}
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.22
+
+  frontend:
+    image: ates-frontend:latest
+    build:
+      context: ./frontend
+    container_name: ates-frontend
+    depends_on:
+      - gateway
+    ports:
+      - "80:80"
+    networks:
+      ates-net:
+        ipv4_address: 172.30.0.23
 
 volumes:
   postgres-data:
   grafana-data:
+
+networks:
+  ates-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

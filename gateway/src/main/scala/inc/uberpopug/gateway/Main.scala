@@ -48,8 +48,8 @@ object Main extends ZIOAppDefault:
   /** Единый граф зависимостей Gateway: конфиг, HTTP-клиент, JWT-ключи Auth, resilience, проксирование, Prometheus и
     * маршруты. Собирается только здесь (SSOT композиции).
     */
-  private val appLayer: ZLayer[Any, Throwable, GatewayRoutes & Server & Client & Clock] =
-    ZLayer.make[GatewayRoutes & Server & Client & Clock](
+  private val appLayer: ZLayer[Any, Throwable, GatewayRoutes & Server & Client & Clock & ServerConfig] =
+    ZLayer.make[GatewayRoutes & Server & Client & Clock & ServerConfig](
       AppConfig.layer,
       serverConfig,
       gatewayJwtConfig,
@@ -76,7 +76,7 @@ object Main extends ZIOAppDefault:
       for
         gateway <- ZIO.service[GatewayRoutes]
         _ <- ZIO.logInfo("Starting aTES API Gateway")
-        port <- ZIO.serviceWithZIO[Server](_.port)
-        _ <- ZIO.logInfo(s"Gateway listening on :$port")
+        serverCfg <- ZIO.service[ServerConfig]
+        _ <- ZIO.logInfo(s"Gateway listening on :${serverCfg.port}")
       yield gateway
-    ).flatMap(gateway => Server.serve(gateway.routes)).provideLayer(appLayer)
+    ).flatMap(gateway => Server.serve(gateway.routes.toHandler.toRoutes)).provideLayer(appLayer)

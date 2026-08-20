@@ -46,13 +46,15 @@ object AppConfig:
   /** Дескриптор конфига с корнем `ates`. `adminAddresses` читается как CSV-строка (env-дружелюбно). */
   val config: Config[AppConfig] =
     (
-      deriveConfig[ServerConfig].nested("server") zip
-        deriveConfig[DatabaseConfig].nested("database") zip
-        deriveConfig[KafkaConfig].nested("kafka") zip
-        telegramConfig.nested("channels", "telegram")
-    ).map { case (server, database, kafka, telegram) =>
-      AppConfig(server, database, kafka, ChannelsConfig(telegram))
-    }
+      (
+        deriveConfig[ServerConfig].nested("server") zip
+          deriveConfig[DatabaseConfig].nested("database") zip
+          deriveConfig[KafkaConfig].nested("kafka") zip
+          telegramConfig.nested("channels", "telegram")
+      ).map { case (server, database, kafka, telegram) =>
+        AppConfig(server, database, kafka, ChannelsConfig(telegram))
+      }
+    ).nested("ates")
 
   /** Конфиг Telegram-канала; `adminAddresses` — список адресов через запятую, пустые элементы отбрасываются. */
   private val telegramConfig: Config[TelegramChannelConfig] =

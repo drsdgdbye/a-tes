@@ -108,6 +108,7 @@ object AnalyticsStore:
 /** Quill-реализация read-side проекций поверх Postgres. */
 final case class AnalyticsStoreLive(ctx: Postgres) extends AnalyticsStore:
   import ctx.*
+  import Tables.given
 
   /** Оборачивает SQL-ошибку в `PersistenceError`. */
   private def toPersistenceError(ex: Throwable): DomainError =

@@ -98,6 +98,7 @@ object TaskRepository:
 /** Quill-реализация репозитория задач поверх Postgres. */
 final case class TaskRepositoryLive(ctx: Postgres) extends TaskRepository:
   import ctx.*
+  import Tables.given
 
   /** Оборачивает SQL-ошибку в `PersistenceError`. */
   private def toPersistenceError(ex: Throwable): DomainError =

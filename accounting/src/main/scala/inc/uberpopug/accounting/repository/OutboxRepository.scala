@@ -58,6 +58,7 @@ object OutboxRepository:
 /** Quill-реализация репозитория outbox поверх Postgres. */
 final case class OutboxRepositoryLive(ctx: Postgres) extends OutboxRepository:
   import ctx.*
+  import Tables.given
 
   /** Оборачивает SQL-ошибку в `PersistenceError`. */
   private def toPersistenceError(ex: Throwable): DomainError =

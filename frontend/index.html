@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>aTES — Вход</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="login-wrap">
+    <h1>aTES</h1>
+    <div class="card">
+      <div id="message" class="alert"></div>
+
+      <div id="login-form">
+        <h2>Вход</h2>
+        <label for="login-email">Email</label>
+        <input type="email" id="login-email" autocomplete="username" required>
+        <label for="login-password">Пароль</label>
+        <input type="password" id="login-password" autocomplete="current-password" required>
+        <div class="form-actions">
+          <button type="button" id="btn-login" class="btn">Войти</button>
+        </div>
+      </div>
+
+      <div id="register-form" style="display:none">
+        <hr>
+        <h2>Регистрация</h2>
+        <label for="reg-name">Имя</label>
+        <input type="text" id="reg-name" autocomplete="name" required>
+        <label for="reg-email">Email</label>
+        <input type="email" id="reg-email" autocomplete="username" required>
+        <label for="reg-password">Пароль</label>
+        <input type="password" id="reg-password" autocomplete="new-password" required>
+        <div class="form-actions">
+          <button type="button" id="btn-register" class="btn-secondary">Зарегистрироваться</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/auth.js"></script>
+</body>
+</html>

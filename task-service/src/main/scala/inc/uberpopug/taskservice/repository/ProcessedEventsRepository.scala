@@ -30,6 +30,7 @@ object ProcessedEventsRepository:
 /** Quill-реализация репозитория обработанных событий. */
 final case class ProcessedEventsRepositoryLive(ctx: Postgres) extends ProcessedEventsRepository:
   import ctx.*
+  import Tables.given
 
   /** Вставляет событие; нарушение уникальности PK (`23505`) — уже обработано. */
   def insertIfAbsent(eventId: UUID, eventType: String, processedAt: Instant): ZIO[Any, DomainError, Boolean] =

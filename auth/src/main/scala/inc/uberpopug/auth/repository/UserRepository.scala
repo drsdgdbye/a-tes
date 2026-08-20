@@ -85,6 +85,7 @@ object UserRepository:
 /** Quill-реализация репозитория пользователей поверх Postgres. */
 final case class UserRepositoryLive(ctx: Postgres) extends UserRepository:
   import ctx.*
+  import Tables.given
 
   /** Оборачивает SQL-ошибку в `PersistenceError`. */
   private def toPersistenceError(ex: Throwable): DomainError =
