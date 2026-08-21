@@ -4,6 +4,7 @@ import com.google.protobuf.ByteString
 import org.apache.kafka.clients.producer.ProducerRecord
 import zio.{Clock, Schedule, ZIO, ZLayer, durationInt}
 import zio.kafka.consumer.{CommittableRecord, Consumer, ConsumerSettings, Subscription}
+import zio.metrics.Metric
 import zio.kafka.producer.Producer
 import zio.kafka.serde.Serde
 import zio.stream.ZStream
@@ -61,35 +62,36 @@ final case class AccountingConsumerLive(
     */
   def run: ZIO[Any, Nothing, Unit] =
     ZIO.logInfo("AccountingConsumer started") *>
-      stream
-        .mapZIO { committable =>
-          handle(committable).foldZIO(
-            error =>
-              if isPoison(error) then
-                produceDlq(committable, error).foldZIO(
-                  dlqError =>
-                    ZIO.logError(
-                      s"Failed to publish ${committable.record.topic()}/${committable.record.key()} to DLQ: ${describe(dlqError)}"
-                    ) *> ZIO.fail(ProcessingFailure(error)),
-                  _ =>
-                    ZIO.logError(
-                      s"Poison record ${committable.record.topic()}/${committable.record.key()} -> DLQ: ${describe(error)}"
-                    ) *> ZIO.succeed(committable.offset)
-                )
-              else
-                ZIO.logError(
-                  s"Transient failure for ${committable.record.topic()}/${committable.record.key()}: ${describe(error)}"
-                ) *> ZIO.fail(ProcessingFailure(error))
-            ,
-            _ => ZIO.succeed(committable.offset)
-          )
-        }
-        .aggregateAsyncWithin(Consumer.collectOffsets, Schedule.fixed(100.millis))
-        .mapZIO(_.commit)
-        .runDrain
-        .retry(Schedule.exponential(100.millis) && Schedule.recurs(4))
-        .catchAll(error => ZIO.logError(s"AccountingConsumer stream failed after retries: ${describe(error)}"))
-        .forever
+      (lagGaugeLoop.fork *>
+        stream
+          .mapZIO { committable =>
+            handle(committable).foldZIO(
+              error =>
+                if isPoison(error) then
+                  produceDlq(committable, error).foldZIO(
+                    dlqError =>
+                      ZIO.logError(
+                        s"Failed to publish ${committable.record.topic()}/${committable.record.key()} to DLQ: ${describe(dlqError)}"
+                      ) *> ZIO.fail(ProcessingFailure(error)),
+                    _ =>
+                      ZIO.logError(
+                        s"Poison record ${committable.record.topic()}/${committable.record.key()} -> DLQ: ${describe(error)}"
+                      ) *> ZIO.succeed(committable.offset)
+                  )
+                else
+                  ZIO.logError(
+                    s"Transient failure for ${committable.record.topic()}/${committable.record.key()}: ${describe(error)}"
+                  ) *> ZIO.fail(ProcessingFailure(error))
+              ,
+              _ => ZIO.succeed(committable.offset)
+            )
+          }
+          .aggregateAsyncWithin(Consumer.collectOffsets, Schedule.fixed(100.millis))
+          .mapZIO(_.commit)
+          .runDrain
+          .retry(Schedule.exponential(100.millis) && Schedule.recurs(4))
+          .catchAll(error => ZIO.logError(s"AccountingConsumer stream failed after retries: ${describe(error)}"))
+          .forever)
 
   /** Поток записей четырёх топиков (ключ — string, значение — protobuf-байты). */
   private val stream: ZStream[Any, Throwable, CommittableRecord[String, Array[Byte]]] =
@@ -135,7 +137,21 @@ final case class AccountingConsumerLive(
         partition = committable.offset.partition
       )
       _ <- producer.produce(ProducerRecord(cfg.topicDlq, null, record.toByteArray), Serde.string, Serde.byteArray)
+      _ <- Metric.counter("dlq_messages_total").increment
     yield ()
+
+  /** Бесконечный цикл публикации gauge `kafka_consumer_lag` из метрик Kafka-consumer (максимальный lag по партициям).
+    */
+  private def lagGaugeLoop: ZIO[Any, Nothing, Unit] =
+    val publish =
+      consumer.metrics
+        .map(_.collectFirst {
+          case (name, metric) if name.name() == "records-lag-max" =>
+            Metric.gauge("kafka_consumer_lag").set(metric.metricValue().asInstanceOf[Number].doubleValue())
+        })
+        .flatMap(_.getOrElse(ZIO.unit))
+        .catchAll(_ => ZIO.unit)
+    (publish *> ZIO.sleep(10.seconds)).forever
 
   /** Ошибки данных, которые не исправить ретраем: только они уходят в DLQ. `AccountNotFound` сюда НЕ входит: при
     * восстановлении `auth.user.created` приходит позже (catch-up), поэтому событие транзиентно и переобрабатывается.

@@ -1,9 +1,14 @@
 package inc.uberpopug.auth.service
 
 import java.security.KeyPairGenerator
+import java.security.interfaces.ECPrivateKey
 import java.security.spec.ECGenParameterSpec
-import java.util.UUID
+import java.time.Instant
+import java.util.{Date, UUID}
 
+import com.nimbusds.jose.crypto.ECDSASigner
+import com.nimbusds.jose.{JOSEObjectType, JWSAlgorithm, JWSHeader}
+import com.nimbusds.jwt.{JWTClaimsSet, SignedJWT}
 import zio.*
 import zio.test.*
 import zio.test.Assertion.*
@@ -107,5 +112,58 @@ object TokenServiceSpec extends ZIOSpecDefault:
             refresh1.expiresAt == java.time.Instant.EPOCH.plusSeconds(cfg.refreshTtlSeconds)
           )
         }
-      }
+      },
+      suite("access token exp boundary")(
+        test("exp exactly now is accepted (M-AUTH-15)") {
+          val id = UserId(UUID.randomUUID())
+          val kp = newKeyPair
+          val service = TokenServiceLive(cfg, kp)
+          withLiveClock {
+            for
+              now <- Clock.instant
+              token = signToken(kp, id, Role.Popug, Date.from(now))
+              result <- service.verifyAccess(token).exit
+            yield assertTrue(result.isSuccess)
+          }
+        },
+        test("exp one second in the future is accepted (M-AUTH-16)") {
+          val id = UserId(UUID.randomUUID())
+          val kp = newKeyPair
+          val service = TokenServiceLive(cfg, kp)
+          withLiveClock {
+            for
+              now <- Clock.instant
+              token = signToken(kp, id, Role.Popug, Date.from(now.plusSeconds(1)))
+              result <- service.verifyAccess(token).exit
+            yield assertTrue(result.isSuccess)
+          }
+        },
+        test("exp one second in the past is rejected as expired (M-AUTH-15)") {
+          val id = UserId(UUID.randomUUID())
+          val kp = newKeyPair
+          val service = TokenServiceLive(cfg, kp)
+          withLiveClock {
+            for
+              now <- Clock.instant
+              token = signToken(kp, id, Role.Popug, Date.from(now.minusSeconds(1)))
+              result <- service.verifyAccess(token).exit
+            yield assert(result)(fails(isSubtype[TokenInvalid](anything)))
+          }
+        }
+      )
     )
+
+  /** Подписывает access-токен ES256 тем же ключом, что использует `TokenServiceLive`, с заданным `exp`. */
+  private def signToken(kp: java.security.KeyPair, id: UserId, role: Role, exp: Date): String =
+    val signer = new ECDSASigner(kp.getPrivate.asInstanceOf[ECPrivateKey])
+    val claims = new JWTClaimsSet.Builder()
+      .subject(id.value.toString)
+      .claim("role", role.wire)
+      .issuer(cfg.issuer)
+      .issueTime(Date.from(Instant.EPOCH))
+      .expirationTime(exp)
+      .build()
+    val header = new JWSHeader.Builder(JWSAlgorithm.ES256).`type`(JOSEObjectType.JWT).build()
+    val jwt = new SignedJWT(header, claims)
+    jwt.sign(signer)
+    jwt.serialize()

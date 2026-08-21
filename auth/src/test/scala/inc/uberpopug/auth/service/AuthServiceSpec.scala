@@ -352,6 +352,50 @@ object AuthServiceSpec extends ZIOSpecDefault:
                 .exit
             yield assert(result)(fails(equalTo(InvalidCredentials)))
           }
+        },
+        test("increments the stored credential version (M-AUTH-01)") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
+              _ <- service.changePassword("secret123", "new-secret456", AuthenticatedUser(popug.id, Role.Popug))
+              stored <- usersRef.get.map(_.users(popug.id.value))
+            yield assertTrue(stored.version == 1)
+          }
+        },
+        test("a refresh token issued after the change still works (M-AUTH-03)") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
+              _ <- service.login("popug@ates.io", "secret123")
+              _ <- service.changePassword("secret123", "new-secret456", AuthenticatedUser(popug.id, Role.Popug))
+              newPair <- service.login("popug@ates.io", "new-secret456")
+              rotated <- service.refresh(newPair.refreshToken.value).exit
+            yield assertTrue(rotated.isSuccess)
+          }
+        },
+        test("after a double password change both older pairs are rejected (M-AUTH-05)") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
+              firstPair <- service.login("popug@ates.io", "secret123")
+              _ <- service.changePassword("secret123", "new-secret456", AuthenticatedUser(popug.id, Role.Popug))
+              secondPair <- service.login("popug@ates.io", "new-secret456")
+              _ <- service.changePassword("new-secret456", "final-secret789", AuthenticatedUser(popug.id, Role.Popug))
+              firstStale <- service.refresh(firstPair.refreshToken.value).exit
+              secondStale <- service.refresh(secondPair.refreshToken.value).exit
+              thirdLogin <- service.login("popug@ates.io", "final-secret789").exit
+            yield assertTrue(
+              firstStale.isFailure,
+              secondStale.isFailure,
+              thirdLogin.isSuccess
+            )
+          }
         }
       ),
       suite("resetPassword")(
@@ -383,6 +427,123 @@ object AuthServiceSpec extends ZIOSpecDefault:
               newLogin.isSuccess
             ) && assert(oldLogin)(fails(equalTo(InvalidCredentials))) && assert(staleRefresh)(
               fails(isSubtype[RefreshTokenInvalid](anything))
+            )
+          }
+        },
+        test("admin can reset their own password (M-AUTH-08)") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              admin <- seedUser(usersRef, "Admin", "admin@ates.io", "admin-pass", Role.Admin)
+              _ <- service.resetPassword(admin.id, "new-admin-pass", AuthenticatedUser(admin.id, Role.Admin))
+              stored <- usersRef.get.map(_.users(admin.id.value))
+              login <- service.login("admin@ates.io", "new-admin-pass").exit
+            yield assertTrue(stored.version == 1, stored.name == "Admin", login.isSuccess)
+          }
+        }
+      ),
+      suite("logout")(
+        test("is idempotent for an already-revoked token (M-AUTH-22)") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              _ <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
+              pair <- service.login("popug@ates.io", "secret123")
+              _ <- service.logout(pair.refreshToken.value)
+              second <- service.logout(pair.refreshToken.value).exit
+            yield assertTrue(second.isSuccess)
+          }
+        },
+        test("fails for an unknown token (M-AUTH-22 current contract)") {
+          withLiveClock {
+            for
+              service <- makeService().map(_._1)
+              result <- service.logout(UUID.randomUUID().toString).exit
+            yield assert(result)(fails(isSubtype[RefreshTokenInvalid](anything)))
+          }
+        }
+      ),
+      suite("refresh credential expiry")(
+        test("fails when the refresh token has expired by TTL (M-AUTH-20)") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, tokensRef) = tuple
+              popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
+              token <- ZIO.succeed(RefreshToken.from(UUID.randomUUID().toString).toOption.get)
+              hash = RefreshTokenHash.of(token)
+              _ <- tokensRef.update(
+                _ + (UUID.randomUUID() -> RefreshTokenRow(
+                  id = UUID.randomUUID(),
+                  userId = popug.id.value,
+                  hash = hash.value,
+                  version = popug.version,
+                  expiresAt = Instant.EPOCH.minusSeconds(1),
+                  revoked = false,
+                  createdAt = Instant.EPOCH
+                ))
+              )
+              result <- service.refresh(token.value).exit
+            yield assert(result)(fails(isSubtype[RefreshTokenInvalid](anything)))
+          }
+        },
+        test("refresh fails after the user is disabled (M-AUTH-11)") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              admin <- seedUser(usersRef, "Admin", "admin@ates.io", "admin-pass", Role.Admin)
+              popug <- seedUser(usersRef, "Popug", "popug@ates.io", "secret123", Role.Popug)
+              pair <- service.login("popug@ates.io", "secret123")
+              _ <- service.updateUser(
+                popug.id,
+                None,
+                Some(UserStatus.Disabled),
+                AuthenticatedUser(admin.id, Role.Admin)
+              )
+              result <- service.refresh(pair.refreshToken.value).exit
+            yield assert(result)(fails(isSubtype[RefreshTokenInvalid](anything)))
+          }
+        }
+      ),
+      suite("outbox")(
+        test("createUser outbox record references the created user (M-AUTH-28)") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              admin <- seedUser(usersRef, "Admin", "admin@ates.io", "admin-pass", Role.Admin)
+              created <- service.createUser(
+                "New Popug",
+                "new@ates.io",
+                "pass123",
+                Role.Popug,
+                AuthenticatedUser(admin.id, Role.Admin)
+              )
+              outbox <- usersRef.get.map(_.outbox)
+              record = outbox.head
+              event = auth.user_created.UserCreated.parseFrom(record.payload)
+            yield assertTrue(
+              record.aggregateId == created.id.value,
+              record.eventType == "UserCreated",
+              event.userId == created.id.value.toString
+            )
+          }
+        },
+        test("register outbox record references the created user (M-AUTH-28)") {
+          withLiveClock {
+            for
+              tuple <- makeService()
+              (service, usersRef, _) = tuple
+              _ <- service.register("New Popug", "new@ates.io", "pass123")
+              user <- usersRef.get.map(_.users.values.find(_.email.value == "new@ates.io").get)
+              record <- usersRef.get.map(_.outbox.head)
+              event = auth.user_created.UserCreated.parseFrom(record.payload)
+            yield assertTrue(
+              record.aggregateId == user.id.value,
+              event.userId == user.id.value.toString
             )
           }
         }

@@ -43,6 +43,21 @@ object Main extends ZIOAppDefault:
   private val metricsConfig: ZLayer[Any, Nothing, MetricsConfig] =
     ZLayer.succeed(MetricsConfig(Duration.ofSeconds(10)))
 
+  /** Бесконечный цикл публикации gauge'ов пула HikariCP из MXBean. */
+  private def hikariGaugeLoop(ds: javax.sql.DataSource): ZIO[Any, Nothing, Unit] =
+    val publish =
+      ZIO
+        .attempt {
+          val pool = ds.asInstanceOf[com.zaxxer.hikari.HikariDataSource].getHikariPoolMXBean
+          zio.metrics.Metric.gauge("hikaricp_active_connections").set(pool.getActiveConnections.toDouble) *>
+            zio.metrics.Metric.gauge("hikaricp_idle_connections").set(pool.getIdleConnections.toDouble) *>
+            zio.metrics.Metric.gauge("hikaricp_total_connections").set(pool.getTotalConnections.toDouble) *>
+            zio.metrics.Metric.gauge("hikaricp_awaiting_connections").set(pool.getThreadsAwaitingConnection.toDouble)
+        }
+        .flatten
+        .catchAll(_ => ZIO.unit)
+    (publish *> ZIO.sleep(Duration.ofSeconds(10))).forever
+
   /** Единый граф зависимостей приложения: конфиг, пул соединений, Quill-контекст, репозиторий, каналы, обработчик,
     * consumer и Prometheus. Собирается только здесь (SSOT композиции).
     */
@@ -88,6 +103,7 @@ object Main extends ZIOAppDefault:
         Method.GET / "metrics" -> handler(prometheus.get.map(text => Response.text(text)))
       )
       _ <- consumer.run.fork
+      _ <- hikariGaugeLoop(ds).fork
     yield Server
       .serve(routes)
       .provide(Server.defaultWithPort(cfg.server.port))).flatten.provideLayer(appLayer)

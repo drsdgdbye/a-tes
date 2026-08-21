@@ -5,6 +5,7 @@ import java.time.Instant
 import zio.{Clock, Schedule, ZIO, ZLayer, durationInt}
 import zio.kafka.consumer.{Consumer, ConsumerSettings, Subscription}
 import zio.kafka.serde.Serde
+import zio.metrics.Metric
 import zio.stream.ZStream
 
 import auth.user_created.UserCreated
@@ -55,18 +56,32 @@ final case class UserCreatedConsumerLive(
     */
   def run: ZIO[Any, Nothing, Unit] =
     ZIO.logInfo("UserCreatedConsumer started") *>
-      stream
-        .mapZIO { committable =>
-          handle(committable.record.value).foldZIO(
-            error => ZIO.logError(s"Failed to process UserCreated ${committable.record.key}: ${describe(error)}"),
-            _ => ZIO.unit
-          ) *> ZIO.succeed(committable.offset)
-        }
-        .aggregateAsyncWithin(Consumer.collectOffsets, Schedule.fixed(100.millis))
-        .mapZIO(_.commit)
-        .runDrain
-        .catchAll(error => ZIO.logError(s"UserCreatedConsumer stream failed: ${describe(error)}"))
-        .forever
+      (lagGaugeLoop.fork *>
+        stream
+          .mapZIO { committable =>
+            handle(committable.record.value).foldZIO(
+              error => ZIO.logError(s"Failed to process UserCreated ${committable.record.key}: ${describe(error)}"),
+              _ => ZIO.unit
+            ) *> ZIO.succeed(committable.offset)
+          }
+          .aggregateAsyncWithin(Consumer.collectOffsets, Schedule.fixed(100.millis))
+          .mapZIO(_.commit)
+          .runDrain
+          .catchAll(error => ZIO.logError(s"UserCreatedConsumer stream failed: ${describe(error)}"))
+          .forever)
+
+  /** Бесконечный цикл публикации gauge `kafka_consumer_lag` из метрик Kafka-consumer (максимальный lag по партициям).
+    */
+  private def lagGaugeLoop: ZIO[Any, Nothing, Unit] =
+    val publish =
+      consumer.metrics
+        .map(_.collectFirst {
+          case (name, metric) if name.name() == "records-lag-max" =>
+            Metric.gauge("kafka_consumer_lag").set(metric.metricValue().asInstanceOf[Number].doubleValue())
+        })
+        .flatMap(_.getOrElse(ZIO.unit))
+        .catchAll(_ => ZIO.unit)
+    (publish *> ZIO.sleep(10.seconds)).forever
 
   /** Поток записей топика `auth.user.created` (ключ — string, значение — protobuf-байты). */
   private val stream: ZStream[Any, Throwable, zio.kafka.consumer.CommittableRecord[String, Array[Byte]]] =

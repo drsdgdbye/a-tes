@@ -225,6 +225,56 @@ object AnalyticsServiceSpec extends ZIOSpecDefault:
             assertTrue(report.overall.exists(_.taskId == best)) &&
             assertTrue(report.overall.exists(_.amount.toCents == 9000L))
         },
+        test("M-ANL-11 period=month -> one task per day + overall over [D, D+29]") {
+          for
+            (service, store, _) <- makeService
+            popug = UUID.randomUUID()
+            d1 = LocalDate.of(2026, 1, 1)
+            d2 = LocalDate.of(2026, 1, 20)
+            d3 = LocalDate.of(2026, 2, 10)
+            best = UUID.randomUUID()
+            other = UUID.randomUUID()
+            outside = UUID.randomUUID()
+            _ <- seedUser(store, popug, "Popug", at(d1).toEpochMilli)
+            _ <- seedLifecycle(
+              store,
+              popug,
+              best,
+              1000L,
+              9000L,
+              at(d1, 10).toEpochMilli,
+              at(d1, 11).toEpochMilli,
+              at(d1, 12).toEpochMilli
+            )
+            _ <- seedLifecycle(
+              store,
+              popug,
+              other,
+              1000L,
+              2000L,
+              at(d2, 10).toEpochMilli,
+              at(d2, 11).toEpochMilli,
+              at(d2, 12).toEpochMilli
+            )
+            _ <- seedLifecycle(
+              store,
+              popug,
+              outside,
+              1000L,
+              5000L,
+              at(d3, 10).toEpochMilli,
+              at(d3, 11).toEpochMilli,
+              at(d3, 12).toEpochMilli
+            )
+            report <- service.mostExpensiveTask(AnalyticsPeriod.Month, d1, admin()).orDieE
+          yield assertTrue(report.items.size == 2) &&
+            assertTrue(report.items.head.date == d1) &&
+            assertTrue(report.items.head.task.taskId == best) &&
+            assertTrue(report.items.last.date == d2) &&
+            assertTrue(report.items.last.task.taskId == other) &&
+            assertTrue(report.overall.exists(_.taskId == best)) &&
+            assertTrue(report.overall.exists(_.amount.toCents == 9000L))
+        },
         test("M-ANL-12 no closed tasks in period -> empty items, overall = None") {
           for
             (service, store, _) <- makeService

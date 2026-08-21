@@ -226,6 +226,62 @@ object TaskServiceSpec extends ZIOSpecDefault:
             yield assertTrue(count == 0)
           }
         },
+        test("returns zero when there are no open tasks (M-TASK-20)") {
+          withLiveClock {
+            for
+              first = popug()
+              second = popug()
+              (service, _) <- makeService(Set(first.id, second.id))
+              count <- service.shuffle(manager())
+            yield assertTrue(count == 0)
+          }
+        },
+        test("skips non-open tasks and returns zero (M-TASK-22)") {
+          withLiveClock {
+            for
+              actor = popug()
+              (service, state) <- makeService(Set(actor.id))
+              task <- service.createTask("Completed", None, actor)
+              _ <- service.completeTask(task.id, actor)
+              count <- service.shuffle(manager())
+              updated <- state.get.map(_.tasks(task.id.value))
+            yield assertTrue(count == 0, updated.status == TaskStatus.Completed)
+          }
+        },
+        test("keeps a disabled popug as assignee of open tasks until shuffle (M-TASK-23)") {
+          withLiveClock {
+            for
+              disabledId = userId()
+              other = popug()
+              another = popug()
+              (service, state) <- makeService(Set(other.id, another.id))
+              _ <- seedTask(state, disabledId, "Held by disabled")
+              task <- state.get.map(_.tasks.values.head)
+              before <- service.getTask(task.id, manager())
+              count <- service.shuffle(manager())
+              updated <- state.get.map(_.tasks(task.id.value))
+            yield assertTrue(before.assigneeId == disabledId, count == 1, updated.assigneeId != disabledId)
+          }
+        },
+        test("writes TaskAssigned with old and new assignee ids in outbox (M-TASK-25)") {
+          withLiveClock {
+            for
+              first = popug()
+              second = popug()
+              (service, state) <- makeService(Set(first.id, second.id))
+              created <- service.createTask("Shuffle me", None, first)
+              originalAssignee = created.assigneeId
+              _ <- service.shuffle(manager())
+              updated <- state.get.map(_.tasks(created.id.value))
+              record <- state.get.map(_.outbox.filter(_.eventType == TaskEventTypes.TaskAssigned).last)
+              event = _root_.task.task_assigned.TaskAssigned.parseFrom(record.payload)
+            yield assertTrue(
+              event.oldAssigneeId == originalAssignee.value.toString,
+              event.newAssigneeId == updated.assigneeId.value.toString,
+              event.newAssigneeId != originalAssignee.value.toString
+            )
+          }
+        },
         test("rejects shuffle for a popug") {
           withLiveClock {
             for

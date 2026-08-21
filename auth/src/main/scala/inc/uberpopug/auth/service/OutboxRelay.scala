@@ -9,6 +9,24 @@ import inc.uberpopug.auth.config.AppConfig
 import inc.uberpopug.auth.repository.OutboxRepository
 import inc.uberpopug.common.domain.DomainError
 
+/** Публикация события `UserCreated` из transactional outbox в Kafka. Вынесена в отдельный трейт, чтобы relay можно было
+  * тестировать на in-memory реализациях без настоящего Kafka-брокера.
+  */
+trait OutboxPublisher:
+  /** Публикует событие в Kafka по ключу (id агрегата) и payload. */
+  def publish(key: String, value: Array[Byte]): ZIO[Any, Throwable, Unit]
+
+object OutboxPublisher:
+  /** Адаптер поверх zio-kafka Producer: тема берётся из конфига при построении слоя. */
+  val layer: ZLayer[Producer & AppConfig, Nothing, OutboxPublisher] =
+    ZLayer.fromFunction { (producer: Producer, cfg: AppConfig) =>
+      new OutboxPublisher:
+        def publish(key: String, value: Array[Byte]): ZIO[Any, Throwable, Unit] =
+          producer
+            .produce(ProducerRecord(cfg.kafka.topicUserCreated, key, value), Serde.string, Serde.byteArray)
+            .unit
+    }
+
 /** Публикация событий из transactional outbox в Kafka (фоновый цикл). */
 trait OutboxRelay:
   /** Бесконечный цикл: забирает батч outbox, публикует в Kafka, помечает published. */
@@ -26,16 +44,16 @@ object OutboxRelay:
       yield producer
     }
 
-  /** Слой relay с зависимостями: outbox-репозиторий, producer и конфиг. */
-  val layer: ZLayer[OutboxRepository & Producer & AppConfig, Nothing, OutboxRelay] =
-    ZLayer.fromFunction { (repo: OutboxRepository, producer: Producer, cfg: AppConfig) =>
-      OutboxRelayLive(repo, producer, cfg)
+  /** Слой relay с зависимостями: outbox-репозиторий, publisher и конфиг. */
+  val layer: ZLayer[OutboxRepository & OutboxPublisher & AppConfig, Nothing, OutboxRelay] =
+    ZLayer.fromFunction { (repo: OutboxRepository, publisher: OutboxPublisher, cfg: AppConfig) =>
+      OutboxRelayLive(repo, publisher, cfg)
     }
 
 /** Реализация relay: циклически публикует неопубликованные события в Kafka. */
 final case class OutboxRelayLive(
     repo: OutboxRepository,
-    producer: Producer,
+    publisher: OutboxPublisher,
     cfg: AppConfig
 ) extends OutboxRelay:
 
@@ -43,28 +61,23 @@ final case class OutboxRelayLive(
   def run: ZIO[Any, Nothing, Unit] =
     (for
       _ <- ZIO.logInfo("OutboxRelay started")
-      _ <- loop
+      _ <- processBatch
+      _ <- sleepPolling
     yield ()).forever
 
-  /** Одна итерация: claim батча, публикация каждого события с пометкой published (ошибки отдельных записей логируются и
-    * не роняют цикл), затем пауза до следующего опроса.
+  /** Один цикл: claim батча, публикация каждого события с пометкой published (ошибки отдельных записей логируются и не
+    * роняют цикл). Открыт для тестов в этом пакете.
     */
-  private val loop: ZIO[Any, Nothing, Unit] =
+  private[service] def processBatch: ZIO[Any, Nothing, Unit] =
     (for
       records <- repo.claimBatch(cfg.outbox.batchSize)
       _ <- ZIO.foreachDiscard(records) { record =>
-        val publish =
-          producer
-            .produce(
-              ProducerRecord(cfg.kafka.topicUserCreated, record.aggregateId.toString, record.payload),
-              Serde.string,
-              Serde.byteArray
-            )
-            .flatMap(_ => repo.markPublished(List(record.id)))
-        publish.catchAll(error => ZIO.logError(s"Failed to publish outbox record ${record.id}: ${describe(error)}"))
+        publisher
+          .publish(record.aggregateId.toString, record.payload)
+          .flatMap(_ => repo.markPublished(List(record.id)))
+          .catchAll(error => ZIO.logError(s"Failed to publish outbox record ${record.id}: ${describe(error)}"))
       }
-      _ <- sleepPolling
-    yield ()).catchAll(error => ZIO.logError(s"OutboxRelay cycle failed: ${describe(error)}") *> sleepPolling)
+    yield ()).catchAll(error => ZIO.logError(s"OutboxRelay cycle failed: ${describe(error)}"))
 
   /** Человекочитаемое описание ошибки для логов. */
   private def describe(error: Any): String =

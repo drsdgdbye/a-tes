@@ -18,6 +18,7 @@ val postgresVersion  = "42.7.13"
 val nimbusVersion    = "10.9.1"
 val bcryptVersion    = "0.10.2"
 val logbackVersion   = "1.6.3"
+val testcontainersVersion = "0.41.4"
 
 ThisBuild / scalacOptions ++= Seq(
   "-deprecation",
@@ -110,7 +111,10 @@ lazy val taskService = project
       "com.thesamet.scalapb"       %% "scalapb-runtime"                % scalapb.compiler.Version.scalapbVersion,
       "ch.qos.logback"              % "logback-classic"                % logbackVersion % Runtime,
       "dev.zio"                    %% "zio-test"                       % zioVersion % Test,
-      "dev.zio"                    %% "zio-test-sbt"                   % zioVersion % Test
+      "dev.zio"                    %% "zio-test-sbt"                   % zioVersion % Test,
+      "com.dimafeng"               %% "testcontainers-scala"           % testcontainersVersion % Test,
+      "com.dimafeng"               %% "testcontainers-scala-jdbc"       % testcontainersVersion % Test,
+      "com.dimafeng"               %% "testcontainers-scala-postgresql" % testcontainersVersion % Test
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
     Compile / mainClass := Some("inc.uberpopug.taskservice.Main"),
@@ -283,3 +287,24 @@ lazy val root = project
     Compile / publish / skip := true
   )
   .aggregate(common, auth, taskService, accounting, analytics, notification, gateway)
+
+lazy val e2e = project
+  .in(file("e2e"))
+  .settings(
+    name := "a-tes-e2e",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio" % zioVersion,
+      "dev.zio" %% "zio-json" % zioJsonVersion,
+      "dev.zio" %% "zio-http" % zioHttpVersion,
+      "dev.zio" %% "zio-test" % zioVersion % Test,
+      "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
+      "com.dimafeng" %% "testcontainers-scala" % testcontainersVersion % Test,
+      "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersVersion % Test,
+      "org.postgresql" % "postgresql" % postgresVersion % Test,
+      "ch.qos.logback" % "logback-classic" % logbackVersion % Runtime
+    ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+    Test / fork := true,
+    Test / javaOptions ++= Seq("-Duser.timezone=UTC")
+  )
+  .dependsOn(common, auth, taskService, accounting, analytics, gateway)

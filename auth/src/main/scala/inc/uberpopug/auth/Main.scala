@@ -10,7 +10,7 @@ import inc.uberpopug.auth.api.AuthServerLogic
 import inc.uberpopug.auth.config.{AppConfig, AuthConfig, JwtConfig}
 import inc.uberpopug.auth.db.{DataSourceLayer, DbContext, Migrations}
 import inc.uberpopug.auth.repository.{OutboxRepository, RefreshTokenRepository, UserRepository}
-import inc.uberpopug.auth.service.{AuthService, OutboxRelay, PasswordHasher, TokenService}
+import inc.uberpopug.auth.service.{AuthService, OutboxPublisher, OutboxRelay, PasswordHasher, TokenService}
 
 /** Точка входа aTES Auth Service: собирает ZLayer-граф и поднимает HTTP-сервер. */
 object Main extends ZIOAppDefault:
@@ -40,6 +40,7 @@ object Main extends ZIOAppDefault:
       AuthService.layer,
       AuthServerLogic.layer,
       OutboxRelay.producerLayer,
+      OutboxPublisher.layer,
       OutboxRelay.layer,
       ZLayer.succeed(Clock.ClockLive)
     )

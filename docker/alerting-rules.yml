@@ -1,0 +1,29 @@
+groups:
+  - name: ates
+    rules:
+      - alert: DLQNonEmpty
+        expr: sum(increase(dlq_messages_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DLQ messages detected"
+          description: "Poison-pill or undeliverable messages accumulated in a DLQ in the last 5 minutes."
+
+      - alert: KafkaConsumerLagHigh
+        expr: kafka_consumer_lag > 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Kafka consumer lag"
+          description: "A consumer group has a lag above 100 records; events may be processed late."
+
+      - alert: CircuitBreakerOpen
+        expr: max_over_time(rezilience_circuit_breaker_state[1m]) == 2
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Circuit breaker open"
+          description: "A downstream resilience circuit breaker is in the open state; requests are failing fast."
