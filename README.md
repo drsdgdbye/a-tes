@@ -36,9 +36,9 @@ outbox, Kafka, circuit breakers и распределённым трейсинг
                │  (:10001)   │   │  (:10003)   │   │  (:10004)   │
                │ JWT, outbox │   │ CRUD+outbox │   │ Event store │
                └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
-                      │ Kafka events    │ Kafka events    │ Kafka events
-                      ▼                 ▼                 ▼
-             ┌────────▼─────────────────▼─────────────────▼──────────────┐
+                       │ Kafka events    │ Kafka events    │ Kafka events
+                       │                 │                 │
+              ┌────────▼─────────────────▼─────────────────▼──────────────┐
              │                           Kafka                           │
              │ auth.user.created | task.* | accounting.payment.processed │
              └───────────┬───────────────────────────────┬───────────────┘
