@@ -1,5 +1,15 @@
 # aTES — Awesome Task Exchange System
 
+![Scala](https://img.shields.io/badge/Scala-3.8.4-orange)
+![sbt](https://img.shields.io/badge/sbt-2.0.6-blue)
+![JDK](https://img.shields.io/badge/JDK-21-red)
+![Tests](https://img.shields.io/badge/Tests-240%20passing-brightgreen)
+![Lines](https://img.shields.io/badge/Lines%20of%20Code-12.7k-blue)
+![Migrations](https://img.shields.io/badge/Flyway-22%20migrations-yellow)
+![Protobuf](https://img.shields.io/badge/Protobuf-25%20schemas-green)
+![Stars](https://img.shields.io/github/stars/drsdgdbye/a-tes?style=social)
+![Last Commit](https://img.shields.io/github/last-commit/drsdgdbye/a-tes)
+
 Таск-трекер с рандомным ассайном и корпоративным аккаунтингом: каждая задача
 назначается случайному попугу (сотруднику), при ассайне списывается комиссия,
 при выполнении — начисляется награда. В конце дня балансы обнуляются,
