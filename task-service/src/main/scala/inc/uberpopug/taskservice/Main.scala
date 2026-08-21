@@ -14,7 +14,12 @@ import zio.metrics.connectors.prometheus.PrometheusPublisher
 import inc.uberpopug.taskservice.api.TaskServerLogic
 import inc.uberpopug.taskservice.config.{AppConfig, KafkaConfig}
 import inc.uberpopug.taskservice.db.{DataSourceLayer, DbContext, Migrations}
-import inc.uberpopug.taskservice.repository.{OutboxRepository, ProcessedEventsRepository, TaskRepository}
+import inc.uberpopug.taskservice.repository.{
+  OutboxRepository,
+  ProcessedEventsRepository,
+  TaskRepository,
+  UserRepository
+}
 import inc.uberpopug.taskservice.service.{EligiblePopugs, OutboxRelay, TaskService, UserCreatedConsumer}
 
 /** Точка входа aTES Task Service: собирает ZLayer-граф, поднимает HTTP-сервер, outbox-relay и consumer `UserCreated`.
@@ -60,6 +65,7 @@ object Main extends ZIOAppDefault:
       TaskRepository.layer,
       OutboxRepository.layer,
       ProcessedEventsRepository.layer,
+      UserRepository.layer,
       EligiblePopugs.layer,
       TaskService.layer,
       TaskServerLogic.layer,

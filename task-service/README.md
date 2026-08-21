@@ -15,8 +15,9 @@
 - Перетасовка задач (`POST /tasks/shuffle`): только admin/manager; каждая
   задача перераспределяется случайному попугу (не прежнему), при <2 попугах
   назначение не меняется.
-- Kafka consumer `auth.user.created` (`UserCreated`, protobuf): только роль
-  `popug` попадает в кэш кандидатов на назначение; идемпотентность через
+- Kafka consumer `auth.user.created` (`UserCreated`, protobuf): все роли
+  записываются в проекцию `users` (идемпотентно); роль `popug` также
+  добавляется в кэш `EligiblePopugs`; идемпотентность через
   `processed_events` (PK `event_id`, SQLState 23505).
 - Transactional outbox: события `TaskCreated` / `TaskAssigned` /
   `TaskCompleted` пишутся в `outbox` в той же транзакции, что и данные,
@@ -49,12 +50,12 @@ task-service/
 │   ├── main/
 │   │   ├── resources/
 │   │   │   ├── application.conf            # конфигурация (HOCON)
-│   │   │   └── db/migration/               # Flyway V1–V3
+│   │   │   └── db/migration/               # Flyway V1–V4
 │   │   └── scala/inc/uberpopug/taskservice/
 │   │       ├── Main.scala                  # точка входа, сборка ZLayer-графа
 │   │       ├── api/                        # DTO, tapir-эндпоинты, маппинг ошибок
 │   │       ├── service/                    # TaskService, OutboxRelay, UserCreatedConsumer
-│   │       ├── repository/                 # TaskRepository, OutboxRepository, ProcessedEventsRepository
+│   │       ├── repository/                 # TaskRepository, OutboxRepository, ProcessedEventsRepository, UserRepository
 │   │       ├── domain/                     # Task, PricingPolicy, AssignmentPolicy
 │   │       ├── db/                         # DataSource, Quill Context, Flyway
 │   │       └── config/                     # case classes конфига
@@ -147,6 +148,7 @@ consumer `UserCreated` (дедупликация, роль popug).
 
 ## Известные особенности
 
-- Кэш кандидатов на назначение (`EligiblePopugs`) наполняется из Kafka;
-  до прихода первых событий назначить задачу некому — `409 BUSINESS_RULE_VIOLATION`.
+- Кэш кандидатов на назначение (`EligiblePopugs`) загружается из БД (`users` таблица) при старте и наполняется из Kafka.
+  Кэш выживает перезапуски — назначение работает сразу после старта.
+- Таблица `users` — проекция из Auth Service: заполняется из `UserCreated` Kafka-событий, содержит все роли (для идемпотентности).
 - `GET /metrics` — отдельная zio-http-route в `Main` (как в gateway), не через tapir.

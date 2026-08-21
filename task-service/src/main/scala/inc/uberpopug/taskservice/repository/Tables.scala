@@ -9,3 +9,4 @@ object Tables:
   inline implicit def taskRowSchema: SchemaMeta[TaskRow] = schemaMeta("tasks")
   inline implicit def outboxRowSchema: SchemaMeta[OutboxRow] = schemaMeta("outbox")
   inline implicit def processedEventsRowSchema: SchemaMeta[ProcessedEventRow] = schemaMeta("processed_events")
+  inline implicit def userRowSchema: SchemaMeta[UserRow] = schemaMeta("users")

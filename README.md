@@ -1,6 +1,11 @@
-# aTES — UberPopug Inc Task Exchange System
+# aTES — Awesome Task Exchange System
 
-Монорепозиторий с 6 микросервисами (Scala 3, ZIO 2, tapir, Quill, Kafka, PostgreSQL).
+Таск-трекер с рандомным ассайном и корпоративным аккаунтингом: каждая задача
+назначается случайному попугу (сотруднику), при ассайне списывается комиссия,
+при выполнении — начисляется награда. В конце дня балансы обнуляются,
+выплачиваются зарплаты, а отрицательный долг переносится на следующий. Проект
+учебный — построенный на event-driven архитектуре с event sourcing, transactional
+outbox, Kafka, circuit breakers и распределённым трейсингом.
 
 ## Архитектура
 
@@ -33,118 +38,88 @@
       └─────────────────────┘       └─────────────────────┘
 ```
 
-## Сервисы и порты
+## Сервисы
 
-| Сервис        | Порт   | Описание                        | sbt id        |
-|--------------|--------|---------------------------------|---------------|
-| Auth         | 10001  | JWT (ES256), регистрация, outbox| `auth`        |
-| Gateway      | 10002  | Проксирование, resilience       | `gateway`     |
-| TaskService  | 10003  | CRUD задач, shuffle, outbox     | `taskService` |
-| Accounting   | 10004  | Event store, выплаты            | `accounting`  |
-| Analytics    | 10005  | Read-side проекции, отчёты      | `analytics`   |
-| Notification | 10006  | Telegram-бот, consume-only      | `notification`|
-| Frontend     | 80     | nginx (статика + /api/* proxy)  | —             |
+| Сервис | Порт | Роль |
+|--------|------|------|
+| Auth | 10001 | JWT-авторизация (ES256), регистрация, outbox |
+| Gateway | 10002 | Проксирование, JWT-верификация, resilience (CB/Retry/Timeout/Bulkhead/RateLimiter) |
+| TaskService | 10003 | CRUD задач, случайный ассайн, shuffle, outbox |
+| Accounting | 10004 | Event store, балансы, аудитлог, ежедневные выплаты |
+| Analytics | 10005 | Read-side проекции из Kafka, отчёты (доход менеджмента, попуги в минусе, дорогие задачи) |
+| Notification | 10006 | Telegram-бот, consume-only (уведомления о назначении, выполнении, выплатах) |
+| Frontend | 80 | nginx: статика HTML/CSS/JS + `/api/*` → Gateway |
 
 ## Инфраструктура
 
-| Сервис          | Порт      | Описание                            |
-|----------------|-----------|-------------------------------------|
-| PostgreSQL      | 5432      | 5 БД: ates_auth, ates_task, ates_accounting, ates_analytics, ates_notification |
-| Kafka           | 9092      | Топики: auth.user.created, task.*, accounting.payment.processed |
-| Schema Registry | 8081      | Avro/Protobuf registry              |
-| Jaeger          | 16686 (UI), 4317 (OTLP) | Распределённое трейсирование |
-| Prometheus      | 9090      | Метрики + алерты                    |
-| Grafana         | 3000      | Дашборды (авто-провижининг)         |
+| Компонент | Порт | Назначение |
+|-----------|------|------------|
+| PostgreSQL | 5432 | 5 изолированных БД: `ates_auth`, `ates_task`, `ates_accounting`, `ates_analytics`, `ates_notification` |
+| Kafka | 9092 | Шина событий: `auth.user.created`, `task.*`, `accounting.payment.processed` |
+| Schema Registry | 8081 | Registry protobuf-схем |
+| Jaeger | 16686 / 4317 | Распределённое трейсирование (OTLP) |
+| Prometheus | 9090 | Метрики + алерт-правила |
+| Grafana | 3000 | Дашборды (авто-провижининг) |
 
 ## Запуск
 
-### Все сервисы
-
 ```bash
+# Весь стек
 docker compose up -d --build
+
+# Seed-админ: admin@uberpopug.inc / admin
+# Postgres: ates / ates
+# Kafka: localhost:9092
 ```
 
-Зависимости: Postgres, Kafka, ZooKeeper, Schema Registry, Jaeger, Prometheus, Grafana + 6 сервисов + frontend.
+Сервисы конфигурируются через `ATES_*` env-переменные. Основные:
+- `ATES_NOTIFICATION_CHANNELS_TELEGRAM_BOT_TOKEN` — токен Telegram-бота
+- `ATES_NOTIFICATION_CHANNELS_TELEGRAM_ADMIN_ADDRESSES` — telegram-id админов
+- `ATES_ACCOUNTING_PAYOUT_USE_UTC=false` — interval-режим (для E2E)
 
-### Ключевые cred-ы
-
-- **Auth seed-админ**: `admin@uberpopug.inc` / `admin`
-- **Postgres**: `ates` / `ates` (хост: `localhost:5432`)
-- **Kafka**: `localhost:9092`
-
-### Переменные окружения (env)
-
-Все сервисы используют `ATES_*` env-переменные для конфигурации. Основные:
-
-- `ATES_AUTH_PORT=10001`, `ATES_GATEWAY_PORT=10002`, ...
-- `ATES_NOTIFICATION_CHANNELS_TELEGRAM_BOT_TOKEN` — токен Telegram-бота (обязательно для notification)
-- `ATES_NOTIFICATION_CHANNELS_TELEGRAM_ADMIN_ADDRESSES` — telegram-id админов через запятую
-- `ATES_ACCOUNTING_PAYOUT_USE_UTC=false` — для E2E-тестов (interval-режим)
-
-### Запуск отдельного сервиса (sbt)
+Запуск отдельного сервиса:
 
 ```bash
-sbt auth/run          # Auth :10001
-sbt gateway/run       # Gateway :10002
-sbt taskService/run   # TaskService :10003
-sbt accounting/run    # Accounting :10004
-sbt analytics/run     # Analytics :10005
-sbt notification/run  # Notification :10006
+sbt auth/run          # :10001
+sbt gateway/run       # :10002
+sbt taskService/run   # :10003
+sbt accounting/run    # :10004
+sbt analytics/run     # :10005
+sbt notification/run  # :10006
 ```
 
 ## Тестирование
 
 ```bash
-# Юнит-тесты (增量 в sbt 2.x — только изменённые)
-sbt test
-
-# Полный прогон (все тесты)
-sbt testFull
-
-# По модулю
-sbt "auth/testFull"
-sbt "gateway/testFull"
-sbt "taskService/testFull"
-sbt "accounting/testFull"
-sbt "analytics/testFull"
-sbt "notification/testFull"
-
-# E2E (требует Docker-образов)
-sbt "e2e/testFull"
-
-# Форматирование
-sbt scalafmtAll
-sbt scalafmtCheckAll
+sbt test              # инкрементный (только изменённые)
+sbt testFull          # полный прогон
+sbt "auth/testFull"   # по модулю
+sbt "e2e/testFull"    # E2E (требует Docker-образов)
+sbt scalafmtAll       # форматирование
+sbt scalafmtCheckAll  # проверка формата
 ```
 
 ## Мониторинг
 
-- **Jaeger UI**: http://localhost:16686 — распределённое трейсирование (OTel javaagent)
-- **Prometheus**: http://localhost:9090 — метрики + алерт-правила
-- **Grafana**: http://localhost:3000 — дашборды (автоматический провижининг)
-
-### Кастомные метрики
-
-| Метрика                       | Сервисы                          | Описание                           |
-|------------------------------|----------------------------------|------------------------------------|
-| `dlq_messages_total`         | accounting, analytics, notification | Счётчик событий в DLQ            |
-| `kafka_consumer_lag`         | accounting, analytics, notification, task-service | Задержка consumer'а |
-| `hikari_pool_active_connections` | task-service, accounting, analytics, notification | Активные соединения БД |
-| `rezilience_circuit_breaker_state` | gateway | Состояние CB (0=closed, 1=half-open, 2=open) |
-
-### Алерт-правила
-
-- `DLQNonEmpty` — сообщения в DLQ > 0
-- `KafkaConsumerLagHigh` — задержка consumer > 100
-- `CircuitBreakerOpen` — CB в состоянии open
+- **Jaeger UI** — http://localhost:16686 (OTel javaagent, сквозной трейс)
+- **Prometheus** — http://localhost:9090 (метрики + алерты)
+- **Grafana** — http://localhost:3000 (дашборды: DLQ, consumer lag, Hikari pool, CircuitBreaker)
 
 ## Стек
 
-- Scala 3.8.4, sbt 2.0.6, JDK 21
-- ZIO 2, tapir, zio-http, zio-json, zio-config, zio-kafka, zio-logging
-- Quill (Postgres), Flyway, HikariCP
-- scalapb (protobuf), rezilience (CB/Retry/Timeout/Bulkhead/RateLimiter)
-- OTel javaagent 2.9.0 (Jaeger exporter)
+| Уровень | Технологии |
+|---------|------------|
+| Язык | Scala 3.8.4, JDK 21, sbt 2.0.6 |
+| Эффекты | ZIO 2, zio-http, zio-logging |
+| API | tapir, zio-json |
+| БД | PostgreSQL 16, Quill, Flyway, HikariCP |
+| События | Kafka (zio-kafka), protobuf (scalapb), transactional outbox |
+| Конфиг | zio-config (HOCON + env) |
+| Resilience | rezilience (CircuitBreaker, Retry, TimeLimiter, Bulkhead, RateLimiter) |
+| Авторизация | JWT (ES256, nimbus-jose-jwt), bcrypt |
+| Метрики | zio-metrics-connectors (Prometheus) |
+| Трейсинг | OTel javaagent 2.9.0 → Jaeger |
+| Формат | scalafmt (maxColumn=120) |
 
 ## Структура модулей
 

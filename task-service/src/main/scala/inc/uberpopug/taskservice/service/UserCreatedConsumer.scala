@@ -15,9 +15,11 @@ import inc.uberpopug.common.domain.DomainError.PersistenceError
 import inc.uberpopug.common.domain.UserId
 import inc.uberpopug.taskservice.config.KafkaConfig
 import inc.uberpopug.taskservice.domain.Role
-import inc.uberpopug.taskservice.repository.ProcessedEventsRepository
+import inc.uberpopug.taskservice.repository.{ProcessedEventsRepository, UserRepository}
 
-/** Потребитель событий `UserCreated` из Auth Service: наполняет кэш попугов, доступных для назначения. */
+/** Потребитель событий `UserCreated` из Auth Service: наполняет кэш попугов, доступных для назначения, и пишет проекцию
+  * в таблицу `users`.
+  */
 trait UserCreatedConsumer:
   /** Бесконечный поток обработки событий (никогда не завершается). */
   def run: ZIO[Any, Nothing, Unit]
@@ -34,13 +36,15 @@ object UserCreatedConsumer:
       yield consumer
     }
 
-  /** Слой consumer-а: dependencies — Consumer, KafkaConfig, кэш попугов, репозиторий дедупликации и Clock. */
+  /** Слой consumer-а: dependencies — Consumer, KafkaConfig, кэш попугов, репозиторий дедупликации, репозиторий
+    * пользователей и Clock.
+    */
   val layer: ZLayer[
-    Consumer & KafkaConfig & EligiblePopugs & ProcessedEventsRepository & Clock,
+    Consumer & KafkaConfig & EligiblePopugs & ProcessedEventsRepository & UserRepository & Clock,
     Nothing,
     UserCreatedConsumer
   ] =
-    ZLayer.fromFunction(UserCreatedConsumerLive(_, _, _, _, _))
+    ZLayer.fromFunction(UserCreatedConsumerLive(_, _, _, _, _, _))
 
 /** Реализация consumer-а: подписка на `auth.user.created`, идемпотентная обработка через `processed_events`. */
 final case class UserCreatedConsumerLive(
@@ -48,6 +52,7 @@ final case class UserCreatedConsumerLive(
     cfg: KafkaConfig,
     eligible: EligiblePopugs,
     processed: ProcessedEventsRepository,
+    userRepository: UserRepository,
     clock: Clock
 ) extends UserCreatedConsumer:
 
@@ -90,7 +95,7 @@ final case class UserCreatedConsumerLive(
   private def handle(bytes: Array[Byte]): ZIO[Any, DomainError, Unit] =
     for
       now <- clock.instant
-      _ <- UserCreatedProcessor.process(bytes, now, processed, eligible)
+      _ <- UserCreatedProcessor.process(bytes, now, processed, eligible, userRepository)
     yield ()
 
   /** Человекочитаемое описание ошибки для логов. */
@@ -100,8 +105,8 @@ final case class UserCreatedConsumerLive(
       case throwable: Throwable => Option(throwable.getMessage).getOrElse(throwable.toString)
       case other                => other.toString
 
-/** Чистая обработка одного события `UserCreated`: дедупликация и наполнение кэша. Вынесена из consumer-а для
-  * тестируемости без Kafka.
+/** Чистая обработка одного события `UserCreated`: дедупликация, наполнение кэша и запись проекции в `users`. Вынесена
+  * из consumer-а для тестируемости без Kafka.
   */
 object UserCreatedProcessor:
   /** Парсит protobuf-событие; уже обработанное событие пропускается; в кэш попадает только роль `popug`. */
@@ -109,7 +114,8 @@ object UserCreatedProcessor:
       bytes: Array[Byte],
       now: Instant,
       processed: ProcessedEventsRepository,
-      eligible: EligiblePopugs
+      eligible: EligiblePopugs,
+      userRepository: UserRepository
   ): ZIO[Any, DomainError, Unit] =
     for
       event <- ZIO
@@ -120,7 +126,9 @@ object UserCreatedProcessor:
         if !deduplicated then ZIO.unit
         else
           Role.from(event.role) match
-            case Right(Role.Popug) => eligible.add(UserId(java.util.UUID.fromString(event.userId)))
-            case Right(_)          => ZIO.unit
-            case Left(error)       => ZIO.fail(error)
+            case Right(role) =>
+              val userId = UserId(java.util.UUID.fromString(event.userId))
+              userRepository.insertIfAbsent(userId, event.name, role) *>
+                (if role == Role.Popug then eligible.add(userId) else ZIO.unit)
+            case Left(error) => ZIO.fail(error)
     yield ()
