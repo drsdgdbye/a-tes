@@ -30,19 +30,19 @@ outbox, Kafka, circuit breakers и распределённым трейсинг
                │     JWT-верификация, проксирование по путям     │
                │    Resilience (CB/Retry/Timeout/Bulkhead/RL)    │
                └──────┬─────────────────┬─────────────────┬──────┘
-                      │ /auth/*         │ /tasks/*        │ /accounts/*, /analytics/*
+                      │ /auth/*         │ /tasks/*        │ /accounts/*
                ┌──────▼──────┐   ┌──────▼──────┐   ┌──────▼──────┐
                │    Auth     │   │ TaskService │   │ Accounting  │
                │  (:10001)   │   │  (:10003)   │   │  (:10004)   │
                │ JWT, outbox │   │ CRUD+outbox │   │ Event store │
                └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
-                       │ Kafka events    │ Kafka events    │ Kafka events
-                       │                 │                 │
-              ┌────────▼─────────────────▼─────────────────▼──────────────┐
+                      │ Kafka events    │ Kafka events    │ Kafka events
+                      │                 │                 │
+             ┌────────▼─────────────────▼─────────────────▼──────────────┐
              │                           Kafka                           │
              │ auth.user.created | task.* | accounting.payment.processed │
              └───────────┬───────────────────────────────┬───────────────┘
-                         │                               │
+                         │ /analytics/*                  │
                  ┌───────▼───────┐                 ┌─────▼─────────┐
                  │   Analytics   │                 │ Notification  │
                  │   (:10005)    │                 │   (:10006)    │
